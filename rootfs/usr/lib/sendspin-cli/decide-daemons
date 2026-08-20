@@ -1,0 +1,6 @@
+#!/command/with-contenv bash
+set -euo pipefail
+
+source /usr/lib/sendspin-cli/common.sh
+
+sendspin::decide_daemons

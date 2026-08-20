@@ -1,0 +1,3 @@
+# Only the image's rootfs belongs in the build context.
+*
+!rootfs

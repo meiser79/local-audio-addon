@@ -1,0 +1,102 @@
+# The player lives upstream and is built here from a pinned ref; this repo never
+# forks it. Bump both ARGs together: the SHA is checked against the clone, so a
+# repointed tag fails the build instead of quietly shipping different code.
+ARG SENDSPIN_CLI_REF=v0.1.0
+ARG SENDSPIN_CLI_SHA=1d563013105c35a7252c526f849b71c94315fc65
+
+# ghcr.io/home-assistant/amd64-base-debian:trixie, which ships s6-overlay v3 and
+# bashio. CI overrides this with the digest for the architecture it is building.
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian@sha256:9281ee991c28532ddae10114ac84750f4aca287a496f6e19583f3a750ad5e786
+
+# debian:trixie-slim, by multi-arch index digest rather than a per-architecture
+# one, so that a cross-build resolves this stage to the target's architecture.
+# Must stay on the same release as BUILD_FROM above: the binary built here is
+# linked against that image's libc.
+FROM debian@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258 AS build
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG SENDSPIN_CLI_REF
+ARG SENDSPIN_CLI_SHA
+
+# PortAudio is deliberately absent: ALSA is the only backend this image offers.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        git \
+        libasound2-dev \
+        libavahi-compat-libdnssd-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+RUN git clone --depth 1 --branch "${SENDSPIN_CLI_REF}" \
+        https://github.com/Sendspin/sendspin-cpp-cli.git . \
+    && cloned="$(git rev-parse --verify HEAD)" \
+    && if [ "${cloned}" != "${SENDSPIN_CLI_SHA}" ]; then \
+        echo "sendspin-cli ${SENDSPIN_CLI_REF} is ${cloned}, expected ${SENDSPIN_CLI_SHA}" >&2; \
+        exit 1; \
+    fi
+
+# A missing -dev dependency does not fail the configure step, it drops the
+# backend and carries on, so the configure summary is the only place the loss
+# shows up. Both lines are therefore required, not merely expected.
+RUN cmake -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DSENDSPIN_CLI_WITH_MDNS=ON \
+        -DSENDSPIN_CLI_WITH_PORTAUDIO=OFF \
+        -DSENDSPIN_CLI_BUILD_TESTS=OFF \
+        | tee configure.log \
+    && grep -qE '^-- sendspin-cli audio backends: null, stdout, alsa$' configure.log \
+    && grep -qE '^-- sendspin-cli mDNS: dns_sd \(.*libdns_sd\.so.*\)$' configure.log
+
+RUN cmake --build build -j"$(nproc)"
+
+RUN DESTDIR=/stage cmake --install build --component sendspin-cli
+
+# SENDSPIN_GIT_TAG is the Sendspin/sendspin-cpp tag upstream's CMake pulls in via
+# FetchContent, so it is the transitive pin this image inherits.
+RUN core_tag="$(sed -n 's/^set(SENDSPIN_GIT_TAG "\([^"]*\)".*/\1/p' CMakeLists.txt)" \
+    && test -n "${core_tag}" \
+    && printf 'SENDSPIN_CLI_REF=%s\nSENDSPIN_CLI_SHA=%s\nSENDSPIN_GIT_TAG=%s\n' \
+        "${SENDSPIN_CLI_REF}" "${SENDSPIN_CLI_SHA}" "${core_tag}" \
+        > /build-info.txt
+
+
+FROM ${BUILD_FROM}
+
+ARG SENDSPIN_CLI_REF
+
+LABEL \
+    org.opencontainers.image.source="https://github.com/music-assistant/local-audio-addon" \
+    org.opencontainers.image.version="${SENDSPIN_CLI_REF}" \
+    org.opencontainers.image.licenses="Apache-2.0"
+
+# libasound2-plugins carries the ALSA-to-Pulse bridge, which is what makes
+# `output: default` work on Home Assistant OS, where /etc/asound.conf routes
+# `default` to Home Assistant's PulseAudio.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        avahi-daemon \
+        dbus \
+        libasound2-plugins \
+        libasound2t64 \
+        libavahi-compat-libdnssd1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# The base image sets this too, but the s6-overlay default is to carry on: the
+# sendspin-init oneshot reports a Supervisor it cannot reach by failing, and
+# that has to stop the container rather than leave the services to flounder.
+ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
+
+COPY --from=build /stage/usr/local/bin/sendspin-cli /usr/bin/sendspin-cli
+COPY --from=build /build-info.txt /usr/share/sendspin-cli/BUILD-INFO.txt
+COPY rootfs/ /
+
+# No ENTRYPOINT or CMD: the base image's /init runs s6, which starts the
+# services in rootfs/etc/s6-overlay.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD ["/usr/bin/container-healthcheck"]

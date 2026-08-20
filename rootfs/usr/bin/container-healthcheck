@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source /usr/lib/sendspin-cli/common.sh
+
+# The control socket answers whether or not a server is connected, so a refused
+# query means the player itself is gone.
+sendspin-cli status --control-socket "${SENDSPIN_CONTROL_SOCKET}" > /dev/null
+
+decision=$(sendspin::daemon_decision)
+
+# A player that cannot advertise is undiscoverable, which should be visible
+# rather than look like an idle instance.
+if [ "${decision}" = 'yes' ]; then
+    avahi-daemon --check
+fi
