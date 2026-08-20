@@ -30,8 +30,14 @@ usage() {
 while [ "$#" -gt 0 ]; do
     case $1 in
         --mode)
-            MODE=${2:-}
-            shift 2 || true
+            # A bare trailing --mode must refuse, not hang: shift 2 with one
+            # argument left shifts nothing, and the loop would never advance.
+            [ "$#" -ge 2 ] || {
+                usage
+                exit 2
+            }
+            MODE=$2
+            shift 2
             ;;
         -h | --help)
             usage

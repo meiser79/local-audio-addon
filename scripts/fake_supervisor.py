@@ -120,7 +120,8 @@ def main():
     # 0.0.0.0 rather than localhost: the point of this is to be reachable from a container,
     # whose host-gateway address is not the loopback one. On a CI runner that is an
     # ephemeral VM; on a laptop it is a port open for as long as one smoke run takes.
-    server = ThreadingHTTPServer(("0.0.0.0", args.port), make_handler(options, args.token, args.marker))
+    handler = make_handler(options, args.token, args.marker)
+    server = ThreadingHTTPServer(("0.0.0.0", args.port), handler)
 
     # Printed rather than assumed, because --port 0 means the caller does not know it yet.
     print(f"fake-supervisor: listening on port {server.server_address[1]}", flush=True)

@@ -5,7 +5,9 @@ ARG SENDSPIN_CLI_REF=v0.1.0
 ARG SENDSPIN_CLI_SHA=1d563013105c35a7252c526f849b71c94315fc65
 
 # ghcr.io/home-assistant/amd64-base-debian:trixie, which ships s6-overlay v3 and
-# bashio. CI overrides this with the digest for the architecture it is building.
+# bashio. CI overrides this with the digest for the architecture it is building;
+# those per-arch digests live in .github/workflows/build.yml and release.yml, and
+# a bump must move all three files together, staying on one Debian release.
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian@sha256:9281ee991c28532ddae10114ac84750f4aca287a496f6e19583f3a750ad5e786
 
 # debian:trixie-slim, by multi-arch index digest rather than a per-architecture

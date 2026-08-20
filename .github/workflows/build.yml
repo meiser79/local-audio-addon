@@ -59,6 +59,10 @@ jobs:
       # unused and need an exclusion to say otherwise. `--shell=bash` because s6's
       # `#!/command/with-contenv bash` is a shebang shellcheck does not know, and the alternative
       # is a directive in each of five shipped files.
+      #
+      # Unlike actionlint above, shellcheck is the runner image's preinstall and floats with
+      # that image. Owned rather than pinned: it is GitHub-maintained tooling that fails loud
+      # at lint time, and a digest here would be one more pin no bot watches.
       - name: Lint the shell scripts
         run: |
           shellcheck --shell=bash --external-sources --source-path=rootfs \
