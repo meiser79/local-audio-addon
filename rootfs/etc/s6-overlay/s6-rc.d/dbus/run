@@ -1,0 +1,24 @@
+#!/command/with-contenv bash
+set -euo pipefail
+
+source /usr/lib/sendspin-cli/common.sh
+
+decision=$(sendspin::daemon_decision)
+
+if [ "${decision}" != 'yes' ]; then
+    exec /command/s6-pause
+fi
+
+# Reaching this with the directory bind-mounted means the host's bus was mapped
+# in but is not serving. Nothing here owns that directory, so clearing its pid
+# file or binding a second system bus over its socket path would reach out of
+# the container.
+if mountpoint -q "${SYSTEM_BUS_DIR}"; then
+    sendspin::log "${SYSTEM_BUS_DIR} is bind-mounted but has no socket: not starting a bundled dbus over the host's."
+    exec /command/s6-pause
+fi
+
+mkdir -p /run/dbus
+rm -f /run/dbus/pid
+
+exec dbus-daemon --system --nofork

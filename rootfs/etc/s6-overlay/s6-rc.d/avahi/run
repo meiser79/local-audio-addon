@@ -1,0 +1,14 @@
+#!/command/with-contenv bash
+set -euo pipefail
+
+source /usr/lib/sendspin-cli/common.sh
+
+decision=$(sendspin::daemon_decision)
+
+if [ "${decision}" != 'yes' ]; then
+    exec /command/s6-pause
+fi
+
+sendspin::wait_for_socket "${SYSTEM_BUS_SOCKET}"
+
+exec avahi-daemon
