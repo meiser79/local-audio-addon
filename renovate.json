@@ -1,0 +1,11 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "automerge": false,
+  "description": [
+    "Keeps the pins this repository ships on visible to a bot: the actions its workflows call, the base images the Dockerfile builds on, and the ref the player is built from. Pull requests only, never automerge, because every one of these is a change to what lands on a user's Home Assistant.",
+    "Tracked without help: `uses:` lines pinned to a commit SHA, where the github-actions manager moves the SHA and the trailing version comment together, and the Dockerfile's images -- the `FROM debian@sha256:...` build stage, and the `ARG BUILD_FROM` default, which Renovate reaches through the `FROM ${BUILD_FROM}` that consumes it.",
+    "Left manual on purpose, rather than guessed at with a custom manager: the SENDSPIN_CLI_REF and SENDSPIN_CLI_SHA pair in the Dockerfile is one dependency written as two coupled values, a tag and the commit it has to resolve to, and no manager models that shape; the build asserts the two agree, so a half-finished bump fails there rather than shipping different code than it claims.",
+    "Also unseen by any manager, and so also manual: the per-architecture base digests in .github/workflows/build.yml and release.yml, which are plain YAML strings and must move with the Dockerfile's ARG default and stay on the same Debian release as it; and the actionlint image digest in the lint job, which is a docker reference inside a `run:` script."
+  ]
+}
