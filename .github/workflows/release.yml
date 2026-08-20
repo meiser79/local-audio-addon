@@ -1,3 +1,5 @@
+# sync-store.yml fires on this name, and GitHub matches it silently -- rename them together.
+# The lint job in build.yml asserts the pair agrees.
 name: Release
 
 # A human tags; this publishes what that tag builds. Nothing here creates a tag, and there is no

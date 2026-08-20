@@ -137,7 +137,9 @@ rather than deciding on its own which copy wins.
 The sync reads a `STORE_SYNC_TOKEN` secret from this repository: a fine-grained
 token scoped to `music-assistant/home-assistant-addon` alone, granting
 `contents: write` and `pull-requests: write`. Creating it is a manual step, and
-until it exists every release fails its sync and says so. A sync that failed
+until it exists every release fails its sync and says so. The pull requests it
+opens are authored by whatever account owns the token; a machine account keeps
+the store's history legible if a personal one reads oddly there. A sync that failed
 quietly would have no symptom at all: the store would go on offering the
 previous version, every install would keep working, and the release would
 simply never arrive.

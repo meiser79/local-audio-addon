@@ -28,12 +28,14 @@ on:
 permissions:
   contents: read
 
-# Deliberately no `concurrency` block, where build.yml has one. Two releases are two versions, so
-# two branches and two pull requests. The case that does collide is one release run twice at once,
-# and there both runs compute the same branch, one push wins and the other is rejected -- loud
-# rather than wrong. What a block would add is `cancel-in-progress`, whose window falls between
-# the push and the pull request: it would leave a branch with no pull request behind it, which the
-# job below then treats as a hard failure needing a person.
+# One group per released version, and no cancel-in-progress: a replayed run of the same release
+# queues behind the first and then exits green at the existing-PR check below. Cancelling would be
+# worse -- its window falls between the push and the pull request, leaving a branch with no pull
+# request, which the job treats as a hard failure needing a person. A workflow-wide group would be
+# worse still: GitHub keeps one pending run per group, so a second version's sync could be dropped
+# in favour of the first's.
+concurrency:
+  group: sync-store-${{ github.event.workflow_run.head_branch }}
 
 defaults:
   run:
