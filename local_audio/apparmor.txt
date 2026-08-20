@@ -7,11 +7,12 @@
 profile local_audio flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
-  # A fixed-function player: no mount, umount or remount, no sys_admin and no
-  # dac_read_search. The supervision tree, bashio and the option-reading
-  # scripts all run as root and switch to no other user, so this outer profile
-  # needs no capability at all; the two bundled daemons declare the four they
-  # were measured to need in their own profiles below.
+  # A fixed-function player: no mount, umount or remount, no dac_read_search,
+  # and no sys_admin -- which is also what keeps `host_uts: true` from letting
+  # anything here rename the host. The supervision tree, bashio and the
+  # option-reading scripts all run as root and switch to no other user, so this
+  # outer profile declares no capability; the two bundled daemons declare
+  # theirs below.
   file,
 
   # s6 supervises the three services and passes on a container stop. The stop
@@ -47,7 +48,9 @@ profile local_audio flags=(attach_disconnected,mediate_deleted) {
   network unix stream,
   network unix dgram,
 
-  # The rendered config, the control socket and the recorded daemon decision.
+  # /run/sendspin-cli holds the rendered config, the control socket and the
+  # recorded daemon decision; /data is the add-on's persistent volume; s6
+  # writes and locks the rest of /run.
   /run/sendspin-cli/** rw,
   /data/** rw,
   /run/** rwk,
@@ -124,10 +127,9 @@ profile local_audio flags=(attach_disconnected,mediate_deleted) {
   }
 
   # The player itself: the one component reachable from the network, and the
-  # one that needs no capability whatsoever. It runs as root, and /dev/snd
-  # nodes are root-owned, so owner permissions already cover them -- there is
-  # nothing here for CAP_DAC_OVERRIDE to do. Omitting every `capability` rule
-  # denies the lot.
+  # one that needs no capability at all. It runs as root and /dev/snd nodes
+  # are root-owned, so owner permissions cover them and there is nothing for
+  # CAP_DAC_OVERRIDE to do. Omitting every `capability` rule denies the lot.
   profile /usr/bin/sendspin-cli flags=(attach_disconnected,mediate_deleted) {
     #include <abstractions/base>
     #include <abstractions/nameservice>
@@ -151,8 +153,8 @@ profile local_audio flags=(attach_disconnected,mediate_deleted) {
 
     # ALSA: the library's configuration and the plugin that bridges to
     # PulseAudio. The device-node rules below are inert while the app maps no
-    # /dev/snd, and stay so the profile is not the thing that breaks direct
-    # hardware output if that mapping is ever proven and restored.
+    # /dev/snd; they stay so that the profile is not what breaks direct
+    # hardware output if it ever does.
     /usr/lib/**/alsa-lib/*.so mr,
     /usr/share/alsa/** r,
     /etc/alsa/** r,

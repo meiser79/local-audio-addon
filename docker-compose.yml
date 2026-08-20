@@ -1,6 +1,5 @@
 services:
   local-audio:
-    # No image is published yet; build from this checkout.
     build: .
     container_name: ma-local-audio
     restart: unless-stopped
@@ -13,9 +12,9 @@ services:
       - local-audio-data:/data
       # Host-Avahi mode. Bind-mount the host's system bus and the container
       # leaves its own dbus and avahi-daemon down, advertising through the
-      # host's Avahi instead. Use this when the host already runs Avahi, which
-      # two responders on port 5353 would otherwise fight with. Read-only is
-      # enough to talk to a bus, and it keeps the container off the host's path.
+      # host's Avahi instead. Use it when the host already runs Avahi, which two
+      # responders on port 5353 would otherwise fight with. Read-only is all a
+      # bus client needs.
       # - /var/run/dbus:/var/run/dbus:ro
     environment:
       # Name shown in Music Assistant. Left unset it is the container's

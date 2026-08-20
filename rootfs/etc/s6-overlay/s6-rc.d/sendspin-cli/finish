@@ -1,13 +1,13 @@
 #!/command/with-contenv bash
 
-# $1 is the player's exit code, or 256 when a signal ended it -- which is what
-# a container stop looks like from here. Both pass through untouched. An error
-# exit halts the container instead of letting s6 restart the player forever:
-# the config is rendered from the environment or the add-on options, so nothing
-# can change between attempts, and the Supervisor treats a running container as
-# a healthy add-on no matter what is crash-looping inside it. Restart policy
-# belongs to the layer that can see the failure -- Compose's restart rule, or
-# the add-on watchdog once there is one.
+# $1 is the player's exit code, or 256 when a signal ended it -- what a
+# container stop looks like from here -- and both pass through untouched. An
+# error exit halts the container instead of letting s6 restart the player
+# forever: the config is rendered from the environment or the add-on options,
+# so nothing can change between attempts, and the Supervisor treats a running
+# container as a healthy add-on no matter what is crash-looping inside it.
+# Restart policy belongs to a layer that can see the failure, such as Compose's
+# restart rule.
 if [ "$1" -ne 0 ] && [ "$1" -ne 256 ]; then
     echo "sendspin-cli exited ${1}; stopping the container." >&2
     echo "$1" > /run/s6-linux-init-container-results/exitcode

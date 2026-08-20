@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
 #
-# Boot-level checks for a built local-audio image: that the container comes up, renders the
-# configuration its options asked for, advertises itself over its own dbus and avahi-daemon,
-# keeps those daemons down when they would serve no purpose, reports itself healthy, refuses an
-# option that would inject configuration keys, keeps credentials out of the line it logs about
-# them, stops cleanly, and halts loudly rather than crash-looping when the player cannot start.
+# Boot-level checks for a built local-audio image: that it comes up, renders the configuration
+# its options asked for, runs its bundled daemons only where they serve a purpose, keeps
+# credentials out of what it logs, and fails loudly rather than quietly. The `check_*` functions
+# below carry the detail.
 #
 # The suite runs once per option source, because where the options come from is the riskiest
 # logic in the image. `--mode standalone` delivers them as SENDSPIN_* environment variables,
 # which is what a Compose user does; `--mode addon` serves them from a stand-in Supervisor over
 # the API bashio reads, which is what the add-on does. Every check below is written once and both
 # modes deliver to it, so the two paths cannot end up held to different standards.
-#
-# The workflows under .github/ run this same script, so what CI checks is what a laptop checks.
 #
 # Needs: docker, and python3 for the stand-in Supervisor in add-on mode.
 #
@@ -30,8 +27,9 @@ usage() {
 while [ "$#" -gt 0 ]; do
     case $1 in
         --mode)
-            # A bare trailing --mode must refuse, not hang: shift 2 with one
-            # argument left shifts nothing, and the loop would never advance.
+            # A bare trailing --mode must refuse with the usage line: without
+            # this, `MODE=$2` trips `set -u` and the script dies on an unbound
+            # variable having printed nothing that says what was wrong.
             [ "$#" -ge 2 ] || {
                 usage
                 exit 2
@@ -76,7 +74,7 @@ readonly FAKE_SUPERVISOR="$SCRIPT_DIR/fake_supervisor.py"
 # The option values the checks ask for. A space in the name is deliberate: it is the one option
 # whose value reaches both the config file and the mDNS advertisement, and quoting it wrongly is
 # the mistake that would show up there. `debug` rather than the default, so that the config
-# asserted below proves the level was *delivered* and not merely defaulted to.
+# asserted below proves the level was delivered rather than defaulted.
 readonly PLAYER_NAME='Smoke Test Player'
 readonly PLAYER_LOG_LEVEL=debug
 
@@ -157,10 +155,10 @@ trap cleanup EXIT
 # Reading a container
 # ==============================================================================
 #
-# Nothing here pipes `docker logs` into grep, and that is load-bearing rather than a style
-# choice: `grep -q` exits at its first match, `docker logs` then dies of SIGPIPE, and under
-# `set -o pipefail` the shell reads a *successful* match as a failed pipeline. Every assertion
-# below therefore dumps the logs to a file first and greps the file.
+# Nothing here pipes `docker logs` into grep: `grep -q` exits at its first match, `docker logs`
+# then dies of SIGPIPE, and under `set -o pipefail` the shell reads a *successful* match as a
+# failed pipeline. Every assertion below therefore dumps the logs to a file first and greps the
+# file.
 
 # Writes a container's combined output to a file and echoes the path. Not an error if the
 # container has already exited -- that is the subject of three of the checks.
@@ -172,7 +170,7 @@ logs_of() {
 }
 
 # Prints what a container said, labelled, for a failure message. The logs are the only evidence
-# a CI run leaves behind, so a check that fails prints them rather than describing them.
+# a CI run leaves behind.
 show_logs() {
     local container=$1
     printf '\n---- %s ----\n' "$container" >&2
@@ -209,9 +207,9 @@ assert_log() {
     pass "$what"
 }
 
-# The mirror of assert_log, for lines that must not appear. Whatever the caller waited for before
+# The mirror of assert_log, for lines that must not appear. What the caller waited for before
 # calling this is what makes the absence mean anything: nothing here can prove a line will never
-# arrive, only that it has not by the time the run got this far.
+# arrive, only that it has not yet.
 refute_log() {
     local container=$1 text=$2 what=$3
     if grep -F -e "$text" "$(logs_of "$container")" >/dev/null; then
@@ -278,10 +276,10 @@ refute_config_line() {
     pass "$what"
 }
 
-# `docker top` rather than anything inside the container: it runs on the host, so it cannot be
-# defeated by an image that ships no `ps` -- this one does not -- and it is not something a
-# broken container can answer wrongly. Matching is on the daemon binaries' own names, which
-# neither `s6-supervise avahi` nor the `s6-pause` standing in for a service left down contains.
+# `docker top` runs on the host, so it cannot be defeated by an image that ships no `ps` -- this
+# one does not -- and is not something a broken container can answer wrongly. Matching is on the
+# daemon binaries' own names, which neither `s6-supervise avahi` nor the `s6-pause` standing in
+# for a service left down contains.
 processes_of() {
     local container=$1
     local path="$WORK_DIR/${container}.procs"
@@ -360,8 +358,7 @@ start_supervisor() {
 
 # Every request the stand-in answered since it was started, one outcome per line. `ok <header>`
 # is an authenticated fetch of the one route it serves; anything else is a request that should
-# not have happened. A caller asserting these is what makes the stand-in's authentication a
-# check rather than scenery.
+# not have happened.
 assert_supervisor_requests() {
     local what=$1
     local unexpected
@@ -391,11 +388,10 @@ retire_player() {
 
 # Starts a player with the given options and leaves its container name in $PLAYER. Options are
 # named key=value pairs, and an option left out is one the user did not set -- so the image's own
-# default applies, which is a thing worth being able to test.
+# default applies, which is worth being able to test.
 #
-# How they reach the container is the whole subject of --mode, and the only place the two paths
-# differ: as SENDSPIN_* variables, or as the options object the stand-in Supervisor serves. A
-# check therefore says what it wants and never how it is delivered.
+# This is the only place the two --mode paths differ, so a check says what it wants and never how
+# it is delivered.
 #
 # The name comes back in a global rather than on stdout because a command substitution would run
 # all of this in a subshell, where the container it started is tracked for cleanup in a copy of
@@ -703,7 +699,7 @@ check_supervisor_was_asked() {
 #
 # Unreachable here means refused, from inside the container, which needs nothing of the host and
 # happens at once. A black-holed address would instead prove the oneshot's `timeout-up`, at the
-# cost of thirty seconds a run; the failure being asserted is the same one either way.
+# cost of thirty seconds a run; either asserts the same failure.
 check_supervisor_unreachable() {
     local container
     step 'unreachable Supervisor'
