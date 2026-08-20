@@ -120,6 +120,28 @@ unless the app also asks for every other device on the machine. `hw:` and
 `plughw:` outputs are therefore a Compose-only capability, which is the reason
 to run the container rather than the app for an exclusively-held DAC.
 
+## Store card sync
+
+The card the store offers this app from lives in
+[`music-assistant/home-assistant-addon`](https://github.com/music-assistant/home-assistant-addon),
+and it names both the image and the version to pull, so it has to be bumped for
+every release. `.github/workflows/sync-store.yml` does that: once a release has
+published, it mirrors `local_audio/` from the released tag into that repository
+and opens a pull request there for somebody to merge. It mirrors the whole
+directory rather than the version line, so a release that changed the app's
+README, translations or apparmor profile carries those across too. The card's
+`icon.png` and `logo.png` belong to the store repository and are left alone —
+and if this repository ever starts shipping either, the sync stops and says so
+rather than deciding on its own which copy wins.
+
+The sync reads a `STORE_SYNC_TOKEN` secret from this repository: a fine-grained
+token scoped to `music-assistant/home-assistant-addon` alone, granting
+`contents: write` and `pull-requests: write`. Creating it is a manual step, and
+until it exists every release fails its sync and says so. A sync that failed
+quietly would have no symptom at all: the store would go on offering the
+previous version, every install would keep working, and the release would
+simply never arrive.
+
 ## Health
 
 The image's `HEALTHCHECK` asks the player over its control socket, and, when the
