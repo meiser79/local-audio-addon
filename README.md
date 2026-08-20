@@ -5,8 +5,8 @@ Plays Music Assistant audio out of the machine it runs on, over ALSA.
 This repository is packaging only. The player itself is
 [`sendspin-cli`](https://github.com/Sendspin/sendspin-cpp-cli), which lives
 upstream and is built here from a pinned ref — it is never forked into this
-repository. What this repository adds is a container image, and, arriving in a
-follow-up, the Home Assistant add-on manifest that wraps the same image.
+repository. What this repository adds is a container image, and the Home
+Assistant add-on manifest in `local_audio/` that wraps the same image.
 
 The image runs as root, like the Open Home Foundation's other add-on images.
 
@@ -109,9 +109,16 @@ binary for the wrong one.
 
 ## Home Assistant add-on
 
-The add-on manifest will live in `local_audio/` and wrap this same image, so
-the runtime behaviour described above is shared. It reads its `name`, `output`,
-`log_level` and `server` from the add-on options instead of the environment.
+`local_audio/` is the add-on manifest, wrapping this same image, so the runtime
+behaviour described above is shared. It reads its `name`, `output`, `log_level`
+and `server` from the add-on options instead of the environment.
+
+The add-on plays through the PulseAudio that Home Assistant maps in, and the
+sound card is chosen in the add-on's own Audio panel. It cannot open a card
+directly: the Supervisor grants an add-on no cgroup rule for the sound devices
+unless the add-on also asks for every other device on the machine. `hw:` and
+`plughw:` outputs are therefore a Compose-only capability, which is the reason
+to run the container rather than the add-on for an exclusively-held DAC.
 
 ## Health
 
