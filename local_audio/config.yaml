@@ -12,7 +12,6 @@ arch:
 # Promotion to stable waits on validation against real Home Assistant OS
 # hardware, which this release has not had.
 stage: experimental
-boot: auto
 # Before Home Assistant, so a player that belongs to a group is already
 # advertising by the time Music Assistant starts looking for it.
 startup: services
@@ -34,7 +33,6 @@ host_uts: true
 # what gives this app its own Audio selector in Home Assistant, which is how a
 # user points it at a USB DAC.
 audio: true
-apparmor: true
 options:
   output: default
   log_level: info
