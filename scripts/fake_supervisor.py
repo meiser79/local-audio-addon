@@ -4,16 +4,12 @@ A stand-in for the Home Assistant Supervisor, for the add-on half of scripts/smo
 
 The image reads its add-on options through bashio, which fetches GET
 /addons/self/options/config and takes the object under `.data`. That one route is all this
-answers; anything else gets a 404 rather than a plausible empty object, because an empty
-object is indistinguishable from an add-on whose options are simply all unset -- so a wrong
-path would read as a working fetch.
+answers; anything else gets a 404 rather than an empty object, which would be
+indistinguishable from an add-on whose options are all unset.
 
-Every request is recorded in the marker file, and the smoke suite asserts what it finds
-there. That is what makes the authentication part of the test rather than decoration: a
-container that never forwarded its token would otherwise be served its options anyway and
-pass. The token is looked for in any header that carries it rather than in one named header,
-because bashio has moved between `Authorization: Bearer` and `X-Hassio-Key` across versions
-and this is not meant to be a test of which one this bashio uses.
+Every request is recorded in --marker, one outcome per line, and the smoke suite asserts what
+it finds there: a container that never forwarded its token would otherwise be served its
+options anyway and pass.
 
 Runs on the host rather than in a container of its own, so there is no second image to pin
 and no docker network to stand up; the container under test reaches it through
@@ -79,6 +75,9 @@ def make_handler(options, token, marker):
 
         def carried_token(self):
             """The name of the header the token arrived in, or None."""
+            # Any header carrying the token, rather than one named header: bashio has
+            # moved between `Authorization: Bearer` and `X-Hassio-Key` across versions,
+            # and which one this bashio uses is not what the smoke suite is testing.
             for name, value in self.headers.items():
                 if value == token or value == f"Bearer {token}":
                     return name

@@ -44,8 +44,8 @@ RUN git clone --depth 1 --branch "${SENDSPIN_CLI_REF}" \
     fi
 
 # A missing -dev dependency does not fail the configure step, it drops the
-# backend and carries on, so the configure summary is the only place the loss
-# shows up. Both lines are therefore required, not merely expected.
+# backend and carries on, so these two greps on the configure summary are the
+# only thing that catches the loss.
 RUN cmake -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DSENDSPIN_CLI_WITH_MDNS=ON \

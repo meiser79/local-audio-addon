@@ -26,9 +26,7 @@ defaults:
     shell: bash
 
 jobs:
-  # A gate rather than a claim: the workflows and the scripts they call are asserted to be clean,
-  # and an assertion nothing enforces is one that stops being true. Both tools are here because
-  # this repo's whole release path runs through the shell script below.
+  # Both linters are here because this repo's whole release path runs through the shell script.
   lint:
     name: lint
     runs-on: ubuntu-24.04
@@ -41,9 +39,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # actionlint's own container rather than an action wrapping it: one fewer third party with
-      # access to the workspace, and the pin is the digest below rather than somebody's tag. That
-      # digest is actionlint 1.7.12; it is a `run:` script rather than a `uses:` line, so no bot
-      # watches it and the version is recorded here for whoever bumps it.
+      # access to the workspace, and the pin is a digest rather than somebody's tag. That digest
+      # is actionlint 1.7.12, recorded here because a `run:` script is invisible to Dependabot.
       - name: Lint the workflows
         run: |
           docker run --rm --volume "$PWD:/repo" --workdir /repo \
@@ -60,9 +57,8 @@ jobs:
       # `#!/command/with-contenv bash` is a shebang shellcheck does not know, and the alternative
       # is a directive in each of five shipped files.
       #
-      # Unlike actionlint above, shellcheck is the runner image's preinstall and floats with
-      # that image. Owned rather than pinned: it is GitHub-maintained tooling that fails loud
-      # at lint time, and a digest here would be one more pin no bot watches.
+      # shellcheck is the runner image's preinstall and floats with it, unlike actionlint above:
+      # GitHub-maintained tooling that fails loud at lint time does not need a digest of its own.
       - name: Lint the shell scripts
         run: |
           shellcheck --shell=bash --external-sources --source-path=rootfs \
@@ -76,9 +72,8 @@ jobs:
   # rejects is a card that never appears -- a failure with no local symptom at all. This is the
   # only check anywhere that can see it, so it is worth its own job.
   #
-  # local_audio/ arrives on its own branch, so this job is red until that branch lands. That is
-  # deliberate rather than overlooked: a step guarded on the manifest existing would go on
-  # reporting green after a rename, and a rename is exactly what is worth catching here.
+  # Nothing here is guarded on local_audio/ existing: a guarded step would go on reporting green
+  # after a rename, and a rename is exactly what is worth catching.
   addon-lint:
     name: add-on manifest
     runs-on: ubuntu-24.04
@@ -87,11 +82,11 @@ jobs:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # `community` is left at its default, and that is load-bearing rather than incidental:
-      # everything past the linter's build-file section is gated on that input, and that branch
-      # requires the version to be literally `dev` and a build.json to exist. This add-on has a
-      # real version and no build file, because its image is prebuilt rather than built by the
-      # store -- so turning this on would fail it on both counts.
+      # `community` is left at its default: everything past the linter's build-file section is
+      # gated on that input, and that branch requires the version to be literally `dev` and a
+      # build.json to exist. This add-on has a real version and no build file, because its image
+      # is prebuilt rather than built by the store, so turning this on would fail it on both
+      # counts.
       - name: Lint the add-on manifest
         uses: frenck/action-addon-linter@b9cfd1bc62ba60d2c4fc96317b5f7ada5923f4a7 # v2.21.1
         with:
@@ -101,32 +96,24 @@ jobs:
     name: ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     # The build compiles the player from source and then runs the smoke suite twice. Well clear
-    # of that, and far under the six-hour default: the point is that a container which ignores
-    # SIGTERM fails a leg rather than holding a runner all day.
+    # of that, and far under the six-hour default, so that a container which ignores SIGTERM
+    # fails a leg instead of holding a runner all day.
     timeout-minutes: 60
     strategy:
-      # Every leg's result is wanted rather than only the first failure's: a break that shows on
-      # one architecture and not the other is precisely what the matrix is here to tell apart.
+      # Every leg's result, not just the first failure's: a break that shows on one architecture
+      # and not the other is what the matrix is here to tell apart.
       fail-fast: false
       matrix:
         include:
-          # Native runners on both legs, so nothing here needs qemu. `ubuntu-24.04-arm` is a
-          # standard GitHub-hosted runner, generally available and free for public repositories
-          # since August 2025 -- and available in private ones, at two vCPUs rather than four,
-          # since January 2026, so a private fork still builds.
+          # Native runners on both legs, so nothing here needs qemu.
           - arch: amd64
             runner: ubuntu-24.04
-            # The digests the Dockerfile's own comments record, one per architecture, and the
-            # only place the pair lives together -- bump them together, and on the same Debian
-            # release, because the player is linked against that image's libc. Passed rather
-            # than defaulted: the Dockerfile's default is the amd64 one, so the arm64 leg has to
-            # be told, and floating either of them to a tag is what these pins exist to prevent.
+            # Both base digests are passed rather than defaulted: the Dockerfile's default is the
+            # amd64 one, so the arm64 leg has to be told. The Dockerfile's own comment carries
+            # why all three files must move together, and on one Debian release.
             base: ghcr.io/home-assistant/amd64-base-debian@sha256:9281ee991c28532ddae10114ac84750f4aca287a496f6e19583f3a750ad5e786
-            # What `docker image inspect` calls the result. Spelled out per leg because the sharp
-            # edge here is silent: a leg handed the other architecture's base builds an image
-            # whose player cannot exec, and every check after it fails for a reason that never
-            # names the cause. Note the third spelling of one thing -- the runner label says
-            # `arm`, docker says `arm64`, and the add-on manifest says `aarch64`.
+            # What `docker image inspect` calls the result, and the third spelling of one thing:
+            # the runner label says `arm`, docker says `arm64`, the add-on manifest `aarch64`.
             expect_arch: amd64
           - arch: aarch64
             runner: ubuntu-24.04-arm
@@ -138,14 +125,11 @@ jobs:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # No assertion on the build output, deliberately: the Dockerfile greps its own configure
-      # log for the audio backends and the mDNS provider, so a missing -dev package -- which
-      # CMake would otherwise drop the backend for and carry on from -- fails the build here
-      # rather than shipping a silently degraded player.
+      # No assertion on the build output: the Dockerfile greps its own configure log, so a
+      # silently degraded player fails the build there rather than here.
       #
       # `docker build` and not buildx, unlike release.yml, which needs buildx to push a digest
-      # without a tag. Nothing is published from here, so the plain builder is the fewer moving
-      # parts; the asymmetry is worth leaving rather than unifying.
+      # without a tag. Nothing is published here, so the plain builder is fewer moving parts.
       - name: Build the image
         env:
           BASE: ${{ matrix.base }}
@@ -162,12 +146,9 @@ jobs:
             exit 1
           }
 
-      # Twice, because where the options come from is the riskiest logic in the image and the two
-      # sources share no code above `sendspin::read_options`. Standalone is what a Compose user
-      # gets. Add-on is the bashio branch, which nothing else exercises: it stands up a stand-in
-      # Supervisor and asserts both that the options arrived over the API, authenticated, and
-      # that a Supervisor the container cannot reach stops it rather than starting a player on
-      # defaults nobody chose.
+      # Twice, because the two option sources share no code above `sendspin::read_options`.
+      # Standalone is what a Compose user gets; add-on is the bashio branch, which nothing else
+      # exercises. The script's own header says what each mode covers.
       - name: Smoke test, standalone mode
         run: scripts/smoke_test.sh "$IMAGE" --mode standalone
 

@@ -10,9 +10,8 @@ on:
       - 'v*'
 
 # Deliberately no `concurrency` block, where build.yml has one. Its `cancel-in-progress: true`
-# would be free to cancel a run midway through assembling the manifest, which is the exact
-# partial state the arrangement below exists to make impossible. A superseded tag push is not a
-# thing that happens anyway: a tag is pushed once.
+# could cancel a run midway through assembling the manifest, which is the partial state the
+# arrangement below exists to make impossible. A tag is pushed once, so nothing supersedes it.
 
 permissions:
   contents: read
@@ -22,11 +21,10 @@ defaults:
     shell: bash
 
 jobs:
-  # Ahead of the matrix, and its whole value is that it costs seconds: a mistyped tag must not
-  # burn two runners for half an hour before anyone finds out. What it checks is the one thing
-  # that can be checked without building -- that the tag and the add-on manifest agree on the
-  # version, because the store card pulls `image:version` and a manifest naming a tag that was
-  # never pushed is an add-on that cannot install.
+  # Ahead of the matrix, so a mistyped tag does not burn two runners for half an hour first. The
+  # one thing checkable without building is that the tag and the add-on manifest agree on the
+  # version: the store card pulls `image:version`, and a manifest naming a tag that was never
+  # pushed is an add-on that cannot install.
   preflight:
     name: preflight
     runs-on: ubuntu-24.04
@@ -80,10 +78,10 @@ jobs:
           echo "version=$version" >>"$GITHUB_OUTPUT"
 
   # One leg per architecture, on the same native runners build.yml uses, and each one pushes an
-  # image nothing yet refers to. The order here is the point: the digest is pushed first, then
-  # pulled back and smoke-tested *by that digest*, so the bits that were tested are the bits that
-  # were pushed by identity rather than by an argument about build caches. A leg that fails its
-  # smoke leaves an unreferenced digest behind, which no tag names and nothing will pull.
+  # image nothing yet refers to. The order matters: the digest is pushed first, then pulled back
+  # and smoke-tested *by that digest*, so the bits tested are the bits pushed by identity rather
+  # than by an argument about build caches. A leg that fails its smoke leaves an unreferenced
+  # digest behind, which no tag names and nothing will pull.
   publish:
     name: ${{ matrix.arch }}
     needs: preflight
@@ -98,10 +96,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The same two legs and the same two base digests as build.yml. They are duplicated
-          # across the files rather than shared, because a reusable workflow cannot own the
-          # `strategy.matrix` that is the thing worth not duplicating -- so what is left is to
-          # bump them together.
+          # The same two legs and the same two base digests as build.yml, duplicated rather than
+          # shared because a reusable workflow cannot own the `strategy.matrix` that is the thing
+          # worth not duplicating. Bump them together.
           - arch: amd64
             runner: ubuntu-24.04
             base: ghcr.io/home-assistant/amd64-base-debian@sha256:9281ee991c28532ddae10114ac84750f4aca287a496f6e19583f3a750ad5e786
@@ -136,12 +133,12 @@ jobs:
       # `push-by-digest=true` with `name-canonical=true` pushes the manifest and reports its
       # digest without writing any tag, which is what makes a half-finished release harmless.
       #
-      # Provenance and SBOM off: with them on, each of these pushes is an index wrapping the real
-      # manifest plus an attestation manifest whose platform is `unknown/unknown`, and the
-      # manifest job below would then assemble a list carrying two phantom entries beside the two
-      # real ones. Home Assistant pulls such an image happily -- Music Assistant's own server
-      # image has those entries today -- so this is about a manifest that says what it contains
-      # rather than about a break being avoided.
+      # Provenance and SBOM off: with them on, each push is an index wrapping the real manifest
+      # plus an attestation manifest whose platform is `unknown/unknown`, and the manifest job
+      # below would assemble a list carrying two phantom entries beside the two real ones. Home
+      # Assistant pulls such an image happily -- Music Assistant's own server image has those
+      # entries today -- so this buys a manifest that says what it contains rather than fixing
+      # a break.
       #
       # The digest is read from the metadata file rather than scraped out of the build log.
       - name: Build and push this architecture by digest
@@ -223,16 +220,15 @@ jobs:
       VERSION: ${{ needs.preflight.outputs.version }}
     steps:
       # `imagetools` talks to the registry rather than to a builder, but the buildx CLI is what
-      # carries the subcommand -- and this is the one command here that a tag push is the first
-      # chance to find broken. Set up explicitly rather than left to whatever builder the runner
-      # image happens to ship with.
+      # carries the subcommand, and a tag push is the first chance to find this one broken. Set
+      # up explicitly rather than left to whatever builder the runner image ships with.
       - name: Set up buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       # `merge-multiple`, or each artifact arrives in a directory named after itself and the
       # paths below gain a redundant level. No `name:` or `pattern:`, so this asks for whatever
-      # the legs produced -- which is the point: the assertion that follows is what says whether
-      # that was the right set, and a pattern here would pre-filter the evidence.
+      # the legs produced: the assertion that follows is what says whether that was the right
+      # set, and a pattern here would pre-filter the evidence.
       - name: Download the digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:

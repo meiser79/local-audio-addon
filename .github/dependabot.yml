@@ -1,18 +1,10 @@
-# Keeps the pins this repository ships on visible to a bot. github-actions is
-# the one ecosystem Dependabot can follow here: `uses:` lines pinned to a commit
-# SHA move together with their trailing version comment. Pull requests only —
-# every one of these is a change to what lands on a user's Home Assistant.
+# github-actions is the one ecosystem Dependabot can follow here: `uses:` lines
+# pinned to a commit SHA move together with their trailing version comment.
 #
-# Everything else stays manual on purpose, not by omission:
-# - the Dockerfile's SENDSPIN_CLI_REF / SENDSPIN_CLI_SHA pair is one dependency
-#   written as two coupled values, a tag and the commit it must resolve to; no
-#   manager models that shape, and the build asserts the two agree, so a
-#   half-finished bump fails there rather than shipping different code;
-# - the per-architecture base digests in the Dockerfile and both workflows are
-#   digest-only references a docker manager cannot follow, and they must move
-#   together across files while staying on one Debian release;
-# - the actionlint image digest is a docker reference inside a `run:` script,
-#   invisible to any manager.
+# Three pins stay manual on purpose, not by omission, each for a reason
+# recorded where the pin itself lives: the Dockerfile's SENDSPIN_CLI_REF and
+# SENDSPIN_CLI_SHA pair, the per-architecture base digests in the Dockerfile
+# and both workflows, and the actionlint image digest inside a `run:` script.
 version: 2
 updates:
   - package-ecosystem: github-actions
