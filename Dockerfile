@@ -77,7 +77,8 @@ LABEL \
 
 # libasound2-plugins carries the ALSA-to-Pulse bridge, which is what makes
 # `output: default` work on Home Assistant OS, where /etc/asound.conf routes
-# `default` to Home Assistant's PulseAudio.
+# `default` to Home Assistant's PulseAudio. libstdc++6 is already present in any
+# image with apt, but the player links it, so it is named rather than inherited.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         avahi-daemon \
@@ -85,6 +86,7 @@ RUN apt-get update \
         libasound2-plugins \
         libasound2t64 \
         libavahi-compat-libdnssd1 \
+        libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
 # The base image sets this too, but the s6-overlay default is to carry on: the
