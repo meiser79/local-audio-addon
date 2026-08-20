@@ -6,13 +6,13 @@ This repository is packaging only. The player itself is
 [`sendspin-cli`](https://github.com/Sendspin/sendspin-cpp-cli), which lives
 upstream and is built here from a pinned ref — it is never forked into this
 repository. What this repository adds is a container image, and the Home
-Assistant add-on manifest in `local_audio/` that wraps the same image.
+Assistant app manifest in `local_audio/` that wraps the same image.
 
-The image runs as root, like the Open Home Foundation's other add-on images.
+The image runs as root, like the Open Home Foundation's other app images.
 
 Discovery and playback are local-network only. There is no reverse-proxy,
 HTTPS or overlay-network story, and deployments other than Docker Compose and
-the Home Assistant add-on are not supported.
+the Home Assistant app are not supported.
 
 ## Quickstart with Docker Compose
 
@@ -46,7 +46,7 @@ Configuration is four environment variables, all optional:
 PCM, and `null` discards the audio, which is useful for checking that discovery
 works before wiring up a sound card.
 
-The image ships no `/etc/asound.conf`. As a Home Assistant add-on it gets one
+The image ships no `/etc/asound.conf`. As a Home Assistant app it gets one
 from the Supervisor, which routes `default` to Home Assistant's PulseAudio;
 under Compose there is none, so `default` is ALSA's own default over `/dev/snd`
 — usually the first card, not whatever the host routes its audio through. Name
@@ -107,18 +107,18 @@ multi-arch *index* digest so that it resolves to whichever architecture is being
 built; replacing it with a per-architecture digest would quietly build the
 binary for the wrong one.
 
-## Home Assistant add-on
+## Home Assistant app
 
-`local_audio/` is the add-on manifest, wrapping this same image, so the runtime
+`local_audio/` is the app manifest, wrapping this same image, so the runtime
 behaviour described above is shared. It reads its `name`, `output`, `log_level`
-and `server` from the add-on options instead of the environment.
+and `server` from the app options instead of the environment.
 
-The add-on plays through the PulseAudio that Home Assistant maps in, and the
-sound card is chosen in the add-on's own Audio panel. It cannot open a card
-directly: the Supervisor grants an add-on no cgroup rule for the sound devices
-unless the add-on also asks for every other device on the machine. `hw:` and
+The app plays through the PulseAudio that Home Assistant maps in, and the
+sound card is chosen in the app's own Audio panel. It cannot open a card
+directly: the Supervisor grants an app no cgroup rule for the sound devices
+unless the app also asks for every other device on the machine. `hw:` and
 `plughw:` outputs are therefore a Compose-only capability, which is the reason
-to run the container rather than the add-on for an exclusively-held DAC.
+to run the container rather than the app for an exclusively-held DAC.
 
 ## Health
 
@@ -136,7 +136,7 @@ The Home Assistant Supervisor ignores `HEALTHCHECK`, so this is for the Compose
 audience.
 
 A player that exits with an error stops the whole container rather than being
-restarted in place: the config is rendered from the environment or the add-on
+restarted in place: the config is rendered from the environment or the app
 options, so nothing can change between attempts, and a stopped container is
 visible where an internal crash loop is not. Compose's `restart: unless-stopped`
 is the retry policy.

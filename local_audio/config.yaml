@@ -25,8 +25,9 @@ host_network: true
 # container answer with this machine's name. Without it the Supervisor names the
 # container after the app's own slug, and an unset `name` option would default
 # the player to something like "a1b2c3d4-local-audio" instead. Changing the
-# host's name from in here would need CAP_SYS_ADMIN, which the AppArmor profile
-# does not grant.
+# host's name from in here would need CAP_SYS_ADMIN, which is blocked twice:
+# it is not in the container's default capability set, and the AppArmor profile
+# does not grant it either.
 host_uts: true
 # Maps Home Assistant's PulseAudio in: an /etc/asound.conf routing `default` to
 # it, a client.conf naming the sink, and the socket under /run/audio. It is also

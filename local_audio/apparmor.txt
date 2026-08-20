@@ -1,6 +1,10 @@
 #include <tunables/global>
 
-profile local_audio_addon flags=(attach_disconnected,mediate_deleted) {
+# The top-level name must be the app's slug: the Supervisor rewrites a
+# mismatched name to the slug at install (adjust_profile), but the peer=
+# references below would not be rewritten with it, so the file ships with the
+# name the loaded profile will actually carry.
+profile local_audio flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   # A fixed-function player: no mount, umount or remount, no sys_admin and no
@@ -10,9 +14,10 @@ profile local_audio_addon flags=(attach_disconnected,mediate_deleted) {
   # were measured to need in their own profiles below.
   file,
 
-  # s6 supervises the three services and passes on a container stop.
+  # s6 supervises the three services and passes on a container stop. The stop
+  # signal arrives from the unconfined container runtime, which the base
+  # abstraction already permits receiving from.
   signal (send) set=(kill,term,int,hup,cont,usr1,usr2),
-  signal (receive) set=(kill,term,int,hup,cont) peer=/usr/bin/docker,
 
   # s6-overlay v3: the init, the execline and s6 tools it puts on PATH, and the
   # supervision state it builds under /run.
@@ -30,6 +35,17 @@ profile local_audio_addon flags=(attach_disconnected,mediate_deleted) {
   # and jq turn the answer into the values the run script writes out.
   /usr/lib/bashio/** ix,
   /usr/lib/sendspin-cli/** r,
+  # The oneshot execs this one; common.sh above is only ever sourced.
+  /usr/lib/sendspin-cli/decide-daemons ix,
+
+  # bashio's option fetch is an HTTP call to the Supervisor, and hostname
+  # resolution for it needs the datagram pair.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network unix stream,
+  network unix dgram,
 
   # The rendered config, the control socket and the recorded daemon decision.
   /run/sendspin-cli/** rw,
@@ -56,12 +72,17 @@ profile local_audio_addon flags=(attach_disconnected,mediate_deleted) {
     capability setgid,
     capability setuid,
 
-    signal (receive) set=(kill,term) peer=local_audio_addon,
+    signal (receive) set=(kill,term) peer=local_audio,
 
     /usr/bin/dbus-daemon mr,
     /usr/share/dbus-1/** r,
     /etc/dbus-1/** r,
     /var/lib/dbus/machine-id r,
+    # Resolving the `messagebus` user it drops to; without these the daemon
+    # exits at its user lookup and restarts forever, silently.
+    /etc/nsswitch.conf r,
+    /etc/passwd r,
+    /etc/group r,
     /run/dbus/ rw,
     /run/dbus/** rw,
 
@@ -81,7 +102,10 @@ profile local_audio_addon flags=(attach_disconnected,mediate_deleted) {
     capability sys_chroot,
     capability chown,
 
-    signal (receive) set=(kill,term,hup) peer=local_audio_addon,
+    signal (receive) set=(kill,term,hup) peer=local_audio,
+    # The health check's `avahi-daemon --check` is a kill(pid, 0) between two
+    # processes carrying this same profile.
+    signal set=(exists) peer=@{profile_name},
 
     /usr/sbin/avahi-daemon mr,
     /etc/avahi/** r,
@@ -108,18 +132,27 @@ profile local_audio_addon flags=(attach_disconnected,mediate_deleted) {
     #include <abstractions/base>
     #include <abstractions/nameservice>
 
-    file,
-
-    signal (receive) set=(kill,term,int,hup) peer=local_audio_addon,
+    signal (receive) set=(kill,term,int,hup) peer=local_audio,
 
     /usr/bin/sendspin-cli mr,
+
+    # A wss:// server value needs the trust store.
+    /etc/ssl/** r,
+    /usr/share/ca-certificates/** r,
+
+    # The PulseAudio client writes its cookie under the (root) home.
+    owner /root/.config/ w,
+    owner /root/.config/pulse/ w,
+    owner /root/.config/pulse/** rw,
 
     # Its own rendered config, control socket and persistent state.
     /run/sendspin-cli/** rw,
     /data/state/** rw,
 
-    # ALSA: the library's configuration, the plugin that bridges to
-    # PulseAudio, and the device nodes `sendspin-cli -l` enumerates.
+    # ALSA: the library's configuration and the plugin that bridges to
+    # PulseAudio. The device-node rules below are inert while the app maps no
+    # /dev/snd, and stay so the profile is not the thing that breaks direct
+    # hardware output if that mapping is ever proven and restored.
     /usr/lib/**/alsa-lib/*.so mr,
     /usr/share/alsa/** r,
     /etc/alsa/** r,

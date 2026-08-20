@@ -45,10 +45,11 @@ restarted.
 ### Direct hardware output is not available here
 
 This app plays through Home Assistant's audio system, and cannot open a sound
-card directly — an `hw:` or `plughw:` device in **Audio output** will fail. Home
-Assistant does not grant an app raw access to the sound hardware without also
-handing it every other device on the machine, which is not a trade this app
-makes.
+card directly — an `hw:` or `plughw:` device in **Audio output** fails to open
+and **stops the app**, with the log naming the device it could not open. Put
+**Audio output** back to `default` and start it again. Home Assistant does not
+grant an app raw access to the sound hardware without also handing it every
+other device on the machine, which is not a trade this app makes.
 
 If you need exclusive, bit-perfect access to a DAC, run the container version of
 this player instead of the app. See the
