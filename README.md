@@ -102,7 +102,7 @@ docker exec ma-local-audio cat /usr/share/sendspin-cli/BUILD-INFO.txt
 
 `BUILD_FROM` selects the Home Assistant base image and defaults to the amd64
 one. Building on another architecture means passing the matching digest, which
-is what CI does per architecture. The build stage is pinned to Debian's
+is what CI will do per architecture once it lands. The build stage is pinned to Debian's
 multi-arch *index* digest so that it resolves to whichever architecture is being
 built; replacing it with a per-architecture digest would quietly build the
 binary for the wrong one.
@@ -125,8 +125,14 @@ docker exec ma-local-audio sendspin-cli status \
     --control-socket /run/sendspin-cli/control.sock
 ```
 
-The Home Assistant Supervisor runs its own watchdog and ignores `HEALTHCHECK`,
-so this is for the Compose audience.
+The Home Assistant Supervisor ignores `HEALTHCHECK`, so this is for the Compose
+audience.
+
+A player that exits with an error stops the whole container rather than being
+restarted in place: the config is rendered from the environment or the add-on
+options, so nothing can change between attempts, and a stopped container is
+visible where an internal crash loop is not. Compose's `restart: unless-stopped`
+is the retry policy.
 
 ## Licence
 

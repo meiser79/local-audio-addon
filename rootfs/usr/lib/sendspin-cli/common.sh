@@ -2,8 +2,8 @@
 # Paths, option reading and the bundled-daemon decision, shared by the s6
 # services and the container health check.
 
-readonly SENDSPIN_CONF=/var/run/sendspin-cli.conf
 readonly SENDSPIN_RUN_DIR=/run/sendspin-cli
+readonly SENDSPIN_CONF=/run/sendspin-cli/sendspin-cli.conf
 readonly SENDSPIN_STATE_DIR=/data/state
 readonly SENDSPIN_CONTROL_SOCKET=/run/sendspin-cli/control.sock
 readonly SENDSPIN_DAEMON_DECISION=/run/sendspin-cli/bundled-daemons
@@ -70,7 +70,7 @@ sendspin::decide_daemons() {
     if [ -S "${SYSTEM_BUS_SOCKET}" ]; then
         printf 'no\n' > "${SENDSPIN_DAEMON_DECISION}"
         sendspin::log "Host D-Bus socket present at ${SYSTEM_BUS_SOCKET}: advertising through the host's Avahi, the bundled dbus and avahi-daemon stay down."
-    elif [ -n "${SENDSPIN_SERVER}" ] && [ "${SENDSPIN_SERVER#mdns:}" = "${SENDSPIN_SERVER}" ]; then
+    elif [ -n "${SENDSPIN_SERVER}" ] && ! sendspin::server_is_mdns "${SENDSPIN_SERVER}"; then
         printf 'no\n' > "${SENDSPIN_DAEMON_DECISION}"
         sendspin::log 'A fixed server is configured, which suppresses the mDNS advertisement: the bundled dbus and avahi-daemon stay down.'
     elif [ -n "${SENDSPIN_SERVER}" ]; then
@@ -115,6 +115,12 @@ sendspin::wait_for_socket() {
 # "null", which is a valid value for output.
 sendspin::option() {
     jq -r --arg key "$2" '.[$key] // empty' <<< "$1"
+}
+
+# The mdns: prefix is reserved before the first colon in upstream's -s grammar;
+# everything else is a host, host:port or ws URL.
+sendspin::server_is_mdns() {
+    [ "${1#mdns:}" != "$1" ]
 }
 
 # A server value may carry userinfo, and the connection-mode line is the first

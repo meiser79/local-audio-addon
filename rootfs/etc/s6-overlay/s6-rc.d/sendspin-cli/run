@@ -31,7 +31,7 @@ install -m 600 /dev/null "${SENDSPIN_CONF}"
 
 if [ -z "${SENDSPIN_SERVER}" ]; then
     sendspin::log "Advertising \"${SENDSPIN_NAME}\" over mDNS, waiting for a Music Assistant server to connect."
-elif [ "${SENDSPIN_SERVER#mdns:}" != "${SENDSPIN_SERVER}" ]; then
+elif sendspin::server_is_mdns "${SENDSPIN_SERVER}"; then
     sendspin::log "Resolving the Music Assistant server over mDNS ($(sendspin::redact_server "${SENDSPIN_SERVER}")); this player is not advertised."
 else
     sendspin::log "Dialling out to $(sendspin::redact_server "${SENDSPIN_SERVER}"); this player is not advertised."
