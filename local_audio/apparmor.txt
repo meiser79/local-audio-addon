@@ -1,0 +1,152 @@
+#include <tunables/global>
+
+profile local_audio_addon flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # A fixed-function player: no mount, umount or remount, no sys_admin and no
+  # dac_read_search. The supervision tree, bashio and the option-reading
+  # scripts all run as root and switch to no other user, so this outer profile
+  # needs no capability at all; the two bundled daemons declare the four they
+  # were measured to need in their own profiles below.
+  file,
+
+  # s6 supervises the three services and passes on a container stop.
+  signal (send) set=(kill,term,int,hup,cont,usr1,usr2),
+  signal (receive) set=(kill,term,int,hup,cont) peer=/usr/bin/docker,
+
+  # s6-overlay v3: the init, the execline and s6 tools it puts on PATH, and the
+  # supervision state it builds under /run.
+  /init ix,
+  /bin/** ix,
+  /usr/bin/** ix,
+  /usr/sbin/** ix,
+  /command/** ix,
+  /package/** ix,
+  /etc/s6-overlay/** r,
+  /run/{s6,s6-rc*,service}/** rwix,
+  /run/s6-linux-init-container-results/** rw,
+
+  # bashio reads the options from the Supervisor API; the shared shell library
+  # and jq turn the answer into the values the run script writes out.
+  /usr/lib/bashio/** ix,
+  /usr/lib/sendspin-cli/** r,
+
+  # The rendered config, the control socket and the recorded daemon decision.
+  /run/sendspin-cli/** rw,
+  /data/** rw,
+  /run/** rwk,
+  /tmp/** rw,
+
+  # Nothing here reads the shadow files or edits the account databases, and the
+  # `file` rule above would otherwise allow both.
+  deny /etc/shadow rw,
+  deny /etc/gshadow rw,
+  deny /etc/{passwd,group} w,
+
+  # The bundled daemons and the player are confined further than this profile.
+  /usr/bin/dbus-daemon cx,
+  /usr/sbin/avahi-daemon cx,
+  /usr/bin/sendspin-cli cx,
+
+  # The system bus that avahi-daemon is reached over. Dropping to the
+  # `messagebus` user is the only reason it needs a capability at all.
+  profile /usr/bin/dbus-daemon flags=(attach_disconnected,mediate_deleted) {
+    #include <abstractions/base>
+
+    capability setgid,
+    capability setuid,
+
+    signal (receive) set=(kill,term) peer=local_audio_addon,
+
+    /usr/bin/dbus-daemon mr,
+    /usr/share/dbus-1/** r,
+    /etc/dbus-1/** r,
+    /var/lib/dbus/machine-id r,
+    /run/dbus/ rw,
+    /run/dbus/** rw,
+
+    network unix stream,
+    network unix dgram,
+  }
+
+  # Answers mDNS for this player. It drops to the `avahi` user and chroots, and
+  # both were measured against the Debian build this image installs: dropping
+  # either CAP_SYS_CHROOT or CAP_CHOWN from the container stops it starting.
+  profile /usr/sbin/avahi-daemon flags=(attach_disconnected,mediate_deleted) {
+    #include <abstractions/base>
+    #include <abstractions/nameservice>
+
+    capability setgid,
+    capability setuid,
+    capability sys_chroot,
+    capability chown,
+
+    signal (receive) set=(kill,term,hup) peer=local_audio_addon,
+
+    /usr/sbin/avahi-daemon mr,
+    /etc/avahi/** r,
+    /run/avahi-daemon/ rw,
+    /run/avahi-daemon/** rw,
+    /run/dbus/system_bus_socket rw,
+    @{PROC}/sys/net/ipv{4,6}/** r,
+
+    # 5353 on both families, plus the netlink socket it watches interface and
+    # address changes on.
+    network inet dgram,
+    network inet6 dgram,
+    network netlink raw,
+    network unix stream,
+    network unix dgram,
+  }
+
+  # The player itself: the one component reachable from the network, and the
+  # one that needs no capability whatsoever. It runs as root, and /dev/snd
+  # nodes are root-owned, so owner permissions already cover them -- there is
+  # nothing here for CAP_DAC_OVERRIDE to do. Omitting every `capability` rule
+  # denies the lot.
+  profile /usr/bin/sendspin-cli flags=(attach_disconnected,mediate_deleted) {
+    #include <abstractions/base>
+    #include <abstractions/nameservice>
+
+    file,
+
+    signal (receive) set=(kill,term,int,hup) peer=local_audio_addon,
+
+    /usr/bin/sendspin-cli mr,
+
+    # Its own rendered config, control socket and persistent state.
+    /run/sendspin-cli/** rw,
+    /data/state/** rw,
+
+    # ALSA: the library's configuration, the plugin that bridges to
+    # PulseAudio, and the device nodes `sendspin-cli -l` enumerates.
+    /usr/lib/**/alsa-lib/*.so mr,
+    /usr/share/alsa/** r,
+    /etc/alsa/** r,
+    /etc/asound.conf r,
+    /dev/snd/ r,
+    /dev/snd/** rw,
+    @{PROC}/asound/** r,
+    /sys/class/sound/** r,
+    /sys/devices/**/sound/** r,
+
+    # Home Assistant's PulseAudio, which `audio: true` maps in and which
+    # `output: default` plays through.
+    /etc/pulse/** r,
+    /run/audio/** rw,
+    /dev/shm/** rw,
+
+    # Reached over the system bus, through the avahi-compat shim.
+    /run/dbus/system_bus_socket rw,
+    /run/avahi-daemon/socket rw,
+
+    # The websocket server on 8928 and the connections it makes out; UDP for
+    # resolving a `server` value.
+    network inet stream,
+    network inet6 stream,
+    network inet dgram,
+    network inet6 dgram,
+    network unix stream,
+    network unix dgram,
+  }
+}
