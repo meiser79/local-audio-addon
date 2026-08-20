@@ -68,6 +68,22 @@ jobs:
             rootfs/etc/s6-overlay/s6-rc.d/*/finish
           shellcheck scripts/*.sh
 
+      # sync-store.yml fires on release.yml's `name:`, and GitHub matches the pair silently: a
+      # renamed Release would unhook the store sync with no symptom anywhere. Asserted here so
+      # the renaming pull request itself goes red.
+      - name: Check the workflow-name coupling the store sync rides on
+        run: |
+          release_name="$(sed -nE 's/^name:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p' .github/workflows/release.yml | head -1)"
+          [ -n "$release_name" ] || {
+            echo "::error::could not read a name: from release.yml"
+            exit 1
+          }
+          awk -v n="$release_name" '$1 == "-" && $2 == n { found = 1 } END { exit !found }' \
+            .github/workflows/sync-store.yml || {
+            echo "::error::release.yml is named '$release_name' but sync-store.yml's workflow_run list does not carry it -- the store sync would silently never fire"
+            exit 1
+          }
+
   # The add-on manifest is what the Home Assistant add-on store reads, and one the Supervisor
   # rejects is a card that never appears -- a failure with no local symptom at all. This is the
   # only check anywhere that can see it, so it is worth its own job.

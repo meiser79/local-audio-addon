@@ -1,0 +1,260 @@
+name: Sync store card
+
+# Carries a published release across into the add-on store repository, where the card a user
+# installs from lives. That card names `image:` and `version:`, so until it is bumped ghcr serves
+# a release the store does not offer: the new version exists and nobody can install it. This
+# closes that window without anyone having to remember to.
+#
+# `workflow_run` rather than a `v*` tag trigger of its own. A tag trigger would race release.yml
+# and could bump the store to a version whose build then failed, and a job inside release.yml
+# would make a store outage able to fail a release that had already published. This runs after,
+# separately, and only for a release that finished.
+#
+# Two things that trigger costs. `workflows:` matches release.yml by its `name:` rather than by
+# its path, so renaming that workflow stops this one firing -- silently, because a trigger that
+# never matches raises nothing. And `workflow_run` only ever runs the copy of this file on the
+# default branch, so nothing here can be exercised from a pull request: every change lands
+# untested and is first run by a real release, which is why the steps below assert rather than
+# assume.
+on:
+  workflow_run:
+    workflows:
+      - Release
+    types:
+      - completed
+
+# Nothing here writes through this token; it reads this repository and that is all. Everything
+# that writes does so as the store token, in the one repository that token can reach.
+permissions:
+  contents: read
+
+# One group per released version, and no cancel-in-progress: a replayed run of the same release
+# queues behind the first and then exits green at the existing-PR check below. Cancelling would be
+# worse -- its window falls between the push and the pull request, leaving a branch with no pull
+# request, which the job treats as a hard failure needing a person. A workflow-wide group would be
+# worse still: GitHub keeps one pending run per group, so a second version's sync could be dropped
+# in favour of the first's.
+concurrency:
+  group: sync-store-${{ github.event.workflow_run.head_branch }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sync:
+    name: sync
+    # `completed` fires for a cancelled or failed release too, and there is no published image to
+    # point a card at then. `event` is asserted because everything below reads the release out of
+    # the tag push that started the other workflow.
+    #
+    # The owner check is the one thing here that names this repository rather than deriving it,
+    # and unlike release.yml -- which follows `github.repository` so that a fork publishes into
+    # its own namespace -- there is no per-fork answer to give. The store is one repository
+    # belonging to one organisation, and local_audio/config.yaml already names
+    # `ghcr.io/music-assistant/local-audio-addon` as the image, so a fork's card was never a card
+    # that installs. A fork therefore has nothing to sync anywhere, rather than somewhere else.
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.repository_owner == 'music-assistant'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      STORE_REPO: music-assistant/home-assistant-addon
+      # For a run a tag push started, `head_branch` is the short tag name -- `v0.1.0`, not
+      # `refs/tags/v0.1.0` -- and `head_sha` the commit it points at.
+      TAG: ${{ github.event.workflow_run.head_branch }}
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+      RELEASE_RUN_URL: ${{ github.event.workflow_run.html_url }}
+    steps:
+      # Both of these arrive in the event payload rather than from anything this job controls, and
+      # a wrong value in either is quiet. An empty `head_sha` in particular makes the checkout
+      # below fall back to the default branch -- the one thing naming a ref explicitly is here to
+      # prevent -- and would go unnoticed for as long as main still carries the released version,
+      # which just after a release is exactly what main does.
+      - name: Check the release this sync was triggered for
+        run: |
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::the release that triggered this sync reports head_sha '$RELEASE_SHA', which is not a commit -- refusing to fall back to whatever the default branch holds"
+            exit 1
+          }
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::the release that triggered this sync was for '$TAG', which is not a vMAJOR.MINOR.PATCH tag -- the assumption that workflow_run.head_branch carries the tag no longer holds"
+            exit 1
+          }
+
+      - name: Check the store token is provisioned
+        env:
+          # Read into the environment because `jobs.<job_id>.if` cannot see the `secrets` context
+          # at all, so an unset secret has to reach a step to be reported. Reported is the
+          # requirement, because a sync that quietly declined to run has no symptom of its own:
+          # the card goes on offering the previous version, every install keeps working, and the
+          # release simply never arrives, which is not a thing anybody is watching for.
+          STORE_SYNC_TOKEN: ${{ secrets.STORE_SYNC_TOKEN }}
+        run: |
+          [ -n "$STORE_SYNC_TOKEN" ] || {
+            echo "::error::secret STORE_SYNC_TOKEN is unset -- $STORE_REPO cannot be reached, so this release has not been synced. It wants a fine-grained token scoped to that repository alone, with contents:write and pull-requests:write."
+            exit 1
+          }
+
+      # The released commit, named explicitly. A `workflow_run` job defaults every ref it is given
+      # to the default branch, so a plain checkout here would be whatever main happens to hold --
+      # including anything merged in the hour the release spent building, which was never released.
+      #
+      # This tree is copied and read and nothing else. A step here runs with a token that can write
+      # to another repository, so anything executed out of the checkout -- a script, a build, a
+      # generated file interpolated into a command -- would be running with that reach. Credentials
+      # are dropped for the same reason: this checkout is only ever read from.
+      - name: Check out the released commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          path: source
+          persist-credentials: false
+
+      - name: Read the released version
+        id: version
+        run: |
+          manifest=source/local_audio/config.yaml
+          [ -f "$manifest" ] || {
+            echo "::error::$manifest does not exist at $RELEASE_SHA -- there is no version to sync"
+            exit 1
+          }
+
+          # The same counted read release.yml's preflight does, and duplicated rather than factored
+          # out because the only tree a shared reader could live in is the one checked out above,
+          # and running something out of that tree is what the checkout's comment rules out. Its
+          # comments carry why the matches are counted and why `|| true`; move them together.
+          pattern='^version:[[:space:]]*"?[0-9]+\.[0-9]+\.[0-9]+"?[[:space:]]*$'
+          matches="$(grep -cE "$pattern" "$manifest" || true)"
+          [ "$matches" = 1 ] || {
+            echo "::error::expected exactly one MAJOR.MINOR.PATCH version: line in $manifest, found $matches"
+            exit 1
+          }
+          version="$(sed -nE 's/^version:[[:space:]]*"?([0-9]+\.[0-9]+\.[0-9]+)"?[[:space:]]*$/\1/p' "$manifest")"
+
+          # All this job has from the preflight is that some other run concluded success, which is
+          # a fact about that run rather than about the bytes about to be copied. Checked again
+          # here because this is where the version stops being this repository's business and
+          # becomes a claim made in somebody else's.
+          [ "$TAG" = "v$version" ] || {
+            echo "::error::release $TAG carries $manifest version $version -- refusing to tell the store a version the release did not publish"
+            exit 1
+          }
+
+          echo "release $TAG, syncing version $version"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+      # Credentials kept, unlike the checkout above: the push at the end of this job is made over
+      # them, and this is the one repository the token can reach.
+      - name: Check out the store repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.STORE_REPO }}
+          token: ${{ secrets.STORE_SYNC_TOKEN }}
+          path: store
+
+      - name: Mirror the card and open the pull request
+        env:
+          GH_TOKEN: ${{ secrets.STORE_SYNC_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          branch="sync/local-audio-$VERSION"
+
+          # The whole directory, not a `version:` edit: the card also carries the README the store
+          # renders, the translations and the apparmor profile, and a release that changed any of
+          # those is not synced by a version bump alone.
+          staged="$RUNNER_TEMP/card"
+          rm -rf "$staged"
+          cp -R source/local_audio "$staged"
+
+          # The artwork is the store's. Each Music Assistant card there carries an icon.png and a
+          # logo.png beside its config.yaml; this card has neither yet, and whoever adds them will
+          # add them on that side, where a wholesale replacement would take them away again.
+          # Named as a fixed list and asserted, rather than kept as "whatever the source happens
+          # not to have": the day this repository does ship artwork, that reading would quietly
+          # reverse which side wins, and this one stops instead and says so.
+          for asset in icon.png logo.png; do
+            [ ! -e "source/local_audio/$asset" ] || {
+              echo "::error::this repository now ships local_audio/$asset, which this workflow holds as store-owned -- take $asset out of that list so the released copy is the one that travels"
+              exit 1
+            }
+            if [ -e "store/local_audio/$asset" ]; then
+              cp "store/local_audio/$asset" "$staged/"
+            fi
+          done
+
+          rm -rf store/local_audio
+          mv "$staged" store/local_audio
+
+          # Before any branch is made, so that the ordinary case of a release that changed nothing
+          # the store can see -- or one whose pull request a maintainer has already merged --
+          # finishes here rather than leaving a branch behind to explain.
+          git -C store add --all -- local_audio
+          if git -C store diff --cached --quiet; then
+            echo "$STORE_REPO already carries local_audio at $VERSION -- nothing to sync"
+            exit 0
+          fi
+
+          # A re-run of the release, or a replay of this workflow, must not open a second pull
+          # request. Exiting green rather than failing because the branch is named for the version
+          # and a tag is immutable, so an open pull request on that branch proposes this same
+          # released tree by construction; there is no other content it could be carrying.
+          existing="$(gh pr list --repo "$STORE_REPO" --head "$branch" --state open --json url --jq '.[0].url // empty')"
+          if [ -n "$existing" ]; then
+            echo "$VERSION is already proposed at $existing"
+            exit 0
+          fi
+
+          # A branch with no open pull request behind it is either a proposal somebody closed or a
+          # previous run that pushed and then failed. Which of those it is decides whether it may
+          # be overwritten, neither reading is available from here, and pushing over it destroys
+          # the evidence for whoever could tell them apart.
+          #
+          # 0 is found and 2 is a clean no-match; anything else is an expired token or a network
+          # blip, and is neither. Told apart rather than collapsed into "absent", which is the
+          # reading that would let a transport failure open the branch this guard protects.
+          found=0
+          git -C store ls-remote --exit-code --heads origin "$branch" >/dev/null || found=$?
+          case "$found" in
+            0)
+              echo "::error::$STORE_REPO already has branch $branch and no open pull request for it -- reopen the pull request or delete the branch, then re-run this workflow"
+              exit 1
+              ;;
+            2) ;;
+            *)
+              echo "::error::could not establish whether $STORE_REPO has branch $branch; git ls-remote exited $found"
+              exit 1
+              ;;
+          esac
+
+          git -C store switch --create "$branch"
+          git -C store config user.name 'github-actions[bot]'
+          git -C store config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C store commit --message "Update Local Audio to $VERSION"
+          # Tracking set, so that the `gh` call below reads the head branch off the checkout rather
+          # than matching it up by name.
+          git -C store push --set-upstream origin "$branch"
+
+          # Assembled from the release's own identifiers and nothing out of the tree that was just
+          # copied. A body quoting a mirrored README or changelog would be this repository handing
+          # whatever that file says to a command holding a cross-repository write token.
+          body="$(printf '%s\n' \
+            "Mirrors \`local_audio/\` from \`$GITHUB_REPOSITORY@$RELEASE_SHA\`, released as $TAG." \
+            "" \
+            "\`ghcr.io/$GITHUB_REPOSITORY:$VERSION\` was published by $RELEASE_RUN_URL.")"
+
+          # A pull request where this store's own bumps are commits a bot pushes straight to main.
+          # The mirror above is wholesale, so it also reverts anything a maintainer hand-added to
+          # the card on the store side, and the pull request is what puts that in front of the one
+          # person who would know it mattered. Dropping to a direct push, once that has been dull
+          # for a few releases, is this step deleted and the branch above pushed to the default
+          # branch instead.
+          #
+          # Run from the checkout so that the repository and the head branch are the ones `gh`
+          # reads for itself, rather than two more arguments that could disagree with the push.
+          cd store
+          gh pr create \
+            --title "Update Local Audio to $VERSION" \
+            --body "$body"
