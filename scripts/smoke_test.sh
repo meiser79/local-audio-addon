@@ -103,9 +103,10 @@ readonly EXIT_TIMEOUT_S=60
 readonly HEALTH_TIMEOUT_S=150
 
 # The one deadline that is not ours to choose. It is handed to `docker stop`, so it is the grace
-# period the s6 shutdown is held to rather than a deadline on a poll -- and the Supervisor stops
-# an add-on with the Docker default of 10s. Anything more generous here passes a shutdown that
-# real Home Assistant kills, which is exactly how the 137 on every stop went unnoticed.
+# period the s6 shutdown is held to rather than a deadline on a poll. 10 is the Supervisor's own
+# add-on `timeout` option, which defaults to 10 and which local_audio/config.yaml does not set.
+# Anything more generous here passes a shutdown that real Home Assistant kills, which is exactly
+# how the 137 on every stop went unnoticed.
 readonly STOP_TIMEOUT_S=10
 
 WORK_DIR="$(mktemp -d)"

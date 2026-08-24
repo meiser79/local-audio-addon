@@ -5,5 +5,8 @@
 # held the shutdown open past the Supervisor's 10s and took a SIGKILL with the
 # whole container. Nothing bounded that, because s6-supervise waits forever by
 # default and the shutdown's `s6-rc -bda change` sets no timeout of its own.
-# Twenty times the longest stop measured here, and the Dockerfile's
-# S6_KILL_GRACETIME comment carries the arithmetic against the 10s.
+#
+# 2000ms is twenty times the slowest of these three services' stops -- avahi's
+# own, at under 100ms including its goodbye packets -- so a slow host loses
+# nothing to it. The Dockerfile's S6_KILL_GRACETIME comment carries the
+# arithmetic for the whole shutdown against the 10s.

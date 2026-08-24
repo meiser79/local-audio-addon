@@ -96,11 +96,15 @@ RUN apt-get update \
 # that has to stop the container rather than leave the services to flounder.
 ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 
-# The Supervisor stops an add-on with Docker's default 10s grace and calls a
-# container that overruns it a failure, so the shutdown needs a budget it cannot
-# exceed. The three longruns come down in sequence, each bounded by its own
+# The Supervisor stops an add-on with the grace its `timeout` option asks for and
+# calls a container that overruns it a failure. That option defaults to 10s and
+# config.yaml does not set it, so the shutdown needs a budget it cannot exceed.
+# Raising `timeout` instead would buy silence rather than a clean stop, and the
+# add-on would still be sitting there not shutting down.
+#
+# The three longruns come down in sequence, each bounded by its own
 # `timeout-kill` of 2000ms, and this is what bounds the tail after them: 3 * 2000
-# + 2000 = 8s, worst case, against the 10s.
+# + 2000 = 8s worst case, measured at 8.2s with all three deliberately wedged.
 #
 # The other two gracetimes s6-overlay documents are deliberately absent. They
 # look relevant and are not: S6_SERVICES_GRACETIME only bounds the v2-style
