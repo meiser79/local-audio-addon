@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.5
+
+Built on `sendspin-cli` v0.1.3.
+
+- Music now plays at the quality the sound card supports. The player offered
+  Music Assistant the formats it accepts worst first, and Music Assistant sends
+  the first one on the list it can encode, so the audio arrived at 22.05 kHz
+  however good the speakers were. The list now leads with the best the output
+  will take, which on an ordinary card is 48 kHz 16-bit stereo.
+
 ## 0.1.4
 
 - The log now says so at start when the Home Assistant audio output this app
