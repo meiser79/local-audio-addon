@@ -176,8 +176,10 @@ sendspin::pulse_info_default_sink() {
     sed -n 's/^Default Sink:[[:space:]]*//p' | tail -n 1
 }
 
-# Every sink name in `pactl list sinks` on stdin, one per line. Only used to
-# say what was there when the sink that was looked for was not.
+# Every sink name in `pactl list sinks` on stdin, one per line. Used only when
+# a sink could not be read: whether the name is in here is what tells a wrong
+# Audio panel selection apart from output this code could not parse, and the
+# list itself is what the reader picks a replacement from.
 sendspin::pulse_sink_names() {
     awk '
         /^\tName:/ {
