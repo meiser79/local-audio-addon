@@ -126,8 +126,8 @@ the `ha audio volume output` command that raises it if the sink is muted or at
 zero — silence at every Music Assistant volume, and a state the player has no
 way to report, since it applies volume as software gain rather than through a
 mixer. It never writes to the sink: that level is shared with every other app
-and belongs to the Audio panel. The check is add-on-only. Under Compose there is
-no PulseAudio to ask, and it does nothing.
+and belongs to the Audio panel. The check is app-only: under Compose there is no
+PulseAudio to ask, and it does nothing.
 
 ## Store card sync
 

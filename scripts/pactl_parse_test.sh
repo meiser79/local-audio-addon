@@ -148,6 +148,22 @@ autospawn = no'
     out=$(sendspin::pulse_conf_default_sink <<< "$conf")
     assert_equal '' "$out" 'no default-sink reads as no answer, not as an empty sink name'
 
+    # The key present with nothing after it, which is what the Supervisor renders when the
+    # Audio panel has no selection. It has to read as no answer rather than as a sink named
+    # the empty string: it is the whole trigger for falling back to the server's own default.
+    conf='default-server = unix:/run/audio/pulse.sock
+default-sink =
+autospawn = no'
+    out=$(sendspin::pulse_conf_default_sink <<< "$conf")
+    assert_equal '' "$out" 'an empty default-sink reads as no answer'
+
+    conf='default-server = unix:/run/audio/pulse.sock
+default-sink =   alsa_output.usb-Topping_D10s-00.analog-stereo   
+autospawn = no'
+    out=$(sendspin::pulse_conf_default_sink <<< "$conf")
+    assert_equal 'alsa_output.usb-Topping_D10s-00.analog-stereo' "$out" \
+        'the sink name comes back without the whitespace around it'
+
     out=$(sendspin::pulse_conf_default_sink < /dev/null)
     assert_equal '' "$out" 'an empty client.conf reads as no answer'
 }
