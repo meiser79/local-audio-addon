@@ -4,3 +4,7 @@ set -euo pipefail
 source /usr/lib/sendspin-cli/common.sh
 
 sendspin::decide_daemons
+
+# Last, and guarded even though every path inside already returns success: a
+# boot must not turn on whether PulseAudio answered.
+sendspin::check_output_is_audible || true

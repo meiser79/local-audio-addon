@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.4
+
+- The log now says so at start when the Home Assistant audio output this app
+  plays through is muted or turned all the way down. That is silence at every
+  Music Assistant volume setting, and until now it had no symptom anywhere: the
+  player appeared, accepted the music and played it to nothing. The warning
+  names the output and the `ha audio volume output` command that raises it.
+- Nothing is changed for you. That output level is shared with every other app
+  on this machine and is yours to set in the **Audio** panel, so this app
+  reports it rather than overriding it on every restart.
+
 ## 0.1.3
 
 Fixes the error Home Assistant recorded every time this app was stopped.

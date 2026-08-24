@@ -74,6 +74,29 @@ that hardware adds after the audio leaves this box. The player then hands the
 audio over that much earlier, so it lands in sync with the group rather than
 late. It is remembered here, so it survives a restart.
 
+### No sound at any volume
+
+If the player shows up in Music Assistant and plays, but nothing comes out at
+any volume setting, the Home Assistant audio output itself is muted or turned
+down to zero. Music Assistant's volume cannot lift it: that adjusts the audio
+this app sends, not the level of the output it is sent to.
+
+That level is Home Assistant's, shared by every app on this machine and
+remembered across reboots, so something else may have set it. This app says so
+in its log when it starts, and names the output and the fix. From the Home
+Assistant host console, or a terminal app:
+
+```sh
+ha audio info
+ha audio volume output --index 0 --unmute
+ha audio volume output --index 0 --volume 85
+```
+
+`ha audio info` lists the outputs with their index; use the index of the one
+this app plays through, which is the one the log names. This app will not set
+the level for you — it is shared, so it stays yours to choose in the **Audio**
+panel.
+
 ## Known rough edges
 
 This app is **experimental**. It works, but it has not been through wide testing
