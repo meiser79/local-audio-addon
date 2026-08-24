@@ -121,13 +121,18 @@ machine. `hw:` and `plughw:` outputs are therefore a Compose-only capability,
 which is the reason to run the container rather than the app for an
 exclusively-held DAC.
 
-The app also reads that PulseAudio sink's level once at start, and warns with
-the `ha audio volume output` command that raises it if the sink is muted or at
-zero — silence at every Music Assistant volume, and a state the player has no
-way to report, since it applies volume as software gain rather than through a
-mixer. It never writes to the sink: that level is shared with every other app
-and belongs to the Audio panel. The check is app-only: under Compose there is no
-PulseAudio to ask, and it does nothing.
+The app also reads that PulseAudio sink once at start and names it in the log,
+with its level and the port it is routed to. If the sink is muted or at zero it
+warns with the `ha audio volume output` command that raises it; if the sink is
+routed to a port PulseAudio reports as unavailable — a socket with nothing in
+it — it says so and points at the Audio panel; and if the selected sink is not
+in the list at all, or there are no outputs, it says that too. Each of those is
+silence at every Music Assistant volume, and none of them is something the
+player can report, since it applies volume as software gain rather than through
+a mixer and never opens a mixer to ask. It never writes to the sink: the level
+and the routing are shared with every other app and belong to the Audio panel.
+The check is app-only: under Compose there is no PulseAudio to ask, and it does
+nothing.
 
 ## Store card sync
 
