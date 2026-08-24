@@ -544,6 +544,11 @@ check_advertise_mode() {
     refute_log "$container" 'The Home Assistant audio output this player plays through' \
         'no PulseAudio means the silent-output check says nothing at all'
 
+    # The check also names the output on every start now, which is the line most likely to leak
+    # out from under the socket guard, since it does not wait for anything to be wrong first.
+    refute_log "$container" 'Playing through sink #' \
+        'and it does not name an output it never found either'
+
     # Nothing else in the image uses `pactl`, so a dropped Dockerfile line would take the
     # warning with it and leave every other check green.
     docker exec "$container" sh -c 'command -v pactl' >/dev/null 2>&1 ||
