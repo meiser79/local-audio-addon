@@ -138,13 +138,11 @@ sendspin::redact_server() {
 # The silent-output check
 #
 # The player applies Music Assistant's volume as software gain and opens no
-# mixer, so every reason its audio might not be heard lives in the PulseAudio
-# sink it plays to and nothing in the player can see any of them: a sink another
-# add-on left at zero, a sink routed to a port with nothing plugged into it, a
-# sink that is not there at all. This block reads that sink once at start and
-# says what it found. Reported, never corrected: the level and the port are the
-# Audio panel's, and writing either would override a deliberate choice on every
-# start.
+# mixer, and module-device-restore makes a sink level outlive a reboot. So a
+# sink another add-on left at zero, or routed at a port with nothing plugged
+# into it, is silence at every slider position with nothing able to say so.
+# Reported, never corrected: the level and the port are the Audio panel's, and
+# writing either would override a deliberate choice on every start.
 # ==============================================================================
 
 # Bounded, so a PulseAudio that is up but not answering costs three seconds
@@ -176,10 +174,7 @@ sendspin::pulse_info_default_sink() {
     sed -n 's/^Default Sink:[[:space:]]*//p' | tail -n 1
 }
 
-# Every sink name in `pactl list sinks` on stdin, one per line. Used only when
-# a sink could not be read: whether the name is in here is what tells a wrong
-# Audio panel selection apart from output this code could not parse, and the
-# list itself is what the reader picks a replacement from.
+# Every sink name in `pactl list sinks` on stdin, one per line.
 sendspin::pulse_sink_names() {
     awk '
         /^\tName:/ {
@@ -196,10 +191,9 @@ sendspin::pulse_sink_names() {
 # pactl whose format has moved reads as "no answer" rather than as a healthy
 # sink.
 #
-# The three port fields are deliberately outside that guard: a sink with no
-# `Ports:` block at all is legitimate -- a null sink has none -- and folding
-# them in would turn the mute and level warning off for those sinks. They come
-# back empty instead, which the caller reads as "could not tell".
+# The port fields sit outside that guard: a sink with no `Ports:` block is
+# legitimate, and folding them in would turn the mute and level warning off for
+# every sink like it. They come back empty, which the caller reads as unknown.
 sendspin::pulse_sink_state() {
     awk -v target="$1" '
         function value(line) {
@@ -221,9 +215,8 @@ sendspin::pulse_sink_state() {
             return best
         }
 
-        # The last `(` on the line, so a port whose own description carries
-        # brackets -- `Headphones (unplugged)` -- keeps them and the trailing
-        # `(type: ..., priority: ..., not available)` is still the part read.
+        # The last one, so a description carrying brackets of its own --
+        # `Headphones (unplugged)` -- keeps them.
         function last_bracket(s,   i, at) {
             at = 0
             for (i = 1; i <= length(s); i++)
@@ -231,10 +224,9 @@ sendspin::pulse_sink_state() {
             return at
         }
 
-        # `\t\t<id>: <description> (<...>, <availability>)`. Both pactl shapes
-        # end the bracket with the availability, whether or not `type:` and
-        # `availability group:` are in front of it, so the last comma-separated
-        # part of it is the answer in either.
+        # `\t\t<id>: <description> (<...>, <availability>)`. The availability
+        # closes the bracket whether or not `type:` and `availability group:`
+        # are in front of it, so the last comma-separated part fits both shapes.
         function port_line(line,   at, id, rest, bracket, n, part) {
             sub(/^\t\t/, "", line)
             sub(/[[:space:]]+$/, "", line)
@@ -279,16 +271,16 @@ sendspin::pulse_sink_state() {
 
         /^Sink #/ {
             emit()
-            # Ports accumulate under a per-sink key rather than being cleared,
-            # because whole-array `delete` is not in every awk this may meet.
+            # Keyed per sink rather than cleared: whole-array `delete` is not
+            # in every awk this may meet.
             block++
             idx = ""; name = ""; sink_description = ""; mute = ""; level = ""
             port = ""; in_ports = 0
             if (match($0, /[0-9]+/)) idx = substr($0, RSTART, RLENGTH)
             next
         }
-        # The `Ports:` block runs until the next key at one tab. Tracking it is
-        # what keeps `Properties:` and `Formats:`, indented the same, out.
+        # `Properties:` and `Formats:` are indented the same as port lines, so
+        # only the block a line sits in keeps them apart.
         /^\tPorts:/  { in_ports = 1; next }
         /^\t[^\t]/   { in_ports = 0 }
         # One tab exactly: properties and ports are indented further, and
@@ -306,9 +298,8 @@ sendspin::pulse_sink_state() {
     '
 }
 
-# Says nothing for an audible sink: naming the output on a healthy start is
-# sendspin::report_output's job, and this one only speaks up about the states
-# below. Kept apart from the reading so that scripts/pactl_parse_test.sh can
+# Says nothing for an audible sink: naming a healthy one is report_output's job.
+# Kept apart from the reading above so that scripts/pactl_parse_test.sh can
 # exercise both.
 sendspin::warn_if_sink_is_silent() {
     local idx=$1 name=$2 description=$3 mute=$4 level=$5
@@ -337,14 +328,9 @@ sendspin::warn_if_sink_is_silent() {
     sendspin::log 'The level is shared with every other add-on on this machine, which is why this one will not set it for you.'
 }
 
-# The sink is fine but it is routed at a socket with nothing in it, which reads
-# from the player exactly like a sink at zero.
-#
-# Only the literal `not available` may warn. PulseAudio also reports
-# `availability unknown`, and that is what a card with no jack detection says
-# about every one of its ports -- most line-outs. A warning on a working desktop
-# line-out would be worse than the silence this exists to explain, so anything
-# else, an unrecognised string included, says nothing.
+# Only the literal `not available` may warn. `availability unknown` is what a
+# card with no jack detection reports for every port it has -- most line-outs --
+# and warning about a working one would be worse than the silence this explains.
 sendspin::warn_if_port_is_unavailable() {
     local idx=$1 name=$2 port=$3 description=$4 availability=$5
     local port_text
@@ -363,10 +349,8 @@ sendspin::warn_if_port_is_unavailable() {
     sendspin::log 'The routing is shared with every other add-on on this machine, which is why this one will not change it for you.'
 }
 
-# One line at every start, healthy or not. The report this check was written
-# from had nothing in the log to go on precisely because a healthy start used to
-# say nothing, so the next "no audio" arrives with the output already named
-# whether or not there is a rule here for what went wrong with it.
+# One line at every start, healthy or not: a silent healthy start is why the
+# report this was written from had nothing in the log to go on.
 sendspin::report_output() {
     local idx=$1 name=$2 description=$3 level=$4 port=$5 port_description=$6
     local out
@@ -380,10 +364,8 @@ sendspin::report_output() {
     sendspin::log "${out}."
 }
 
-# Everything the check has to say about a sink list, given the list and the name
-# of the sink to look for in it. Split from the pactl calls that fetch them so
-# that scripts/pactl_parse_test.sh can put a fixture through the whole of it,
-# bail-outs included.
+# Everything the check has to say about a sink list. Split from the pactl calls
+# that fetch it so scripts/pactl_parse_test.sh can put a fixture through it.
 sendspin::report_on_sinks() {
     local target=$1 sinks=$2
     local state name
@@ -401,10 +383,8 @@ sendspin::report_on_sinks() {
     if [ -z "${state}" ]; then
         mapfile -t names < <(sendspin::pulse_sink_names <<< "${sinks}")
 
-        # Nothing came back for two quite different reasons, and saying the
-        # wrong one sends the reader after the wrong thing. The sink being in
-        # the list means it was pactl's format that could not be read, not the
-        # Audio panel selection that was wrong.
+        # The sink being in the list means pactl's format could not be read,
+        # not that the Audio panel selection was wrong.
         for name in "${names[@]}"; do
             if [ "${name}" = "${target}" ]; then
                 sendspin::log "The Home Assistant audio output this player plays through, ${target}, is listed by PulseAudio but could not be read."
@@ -425,9 +405,8 @@ sendspin::report_on_sinks() {
         return 0
     fi
 
-    # Command substitution strips trailing newlines, so a sink whose port fields
-    # all came back empty arrives as five elements rather than eight. The range
-    # still refuses anything short of the five the reading guarantees.
+    # Command substitution strips trailing newlines, so empty port fields arrive
+    # as missing elements rather than as eight.
     mapfile -t field <<< "${state}"
     [ "${#field[@]}" -ge 5 ] && [ "${#field[@]}" -le 8 ] || return 0
 
@@ -455,8 +434,6 @@ sendspin::check_output_is_audible() {
     if [ -r "${PULSE_CLIENT_CONF}" ]; then
         target=$(sendspin::pulse_conf_default_sink < "${PULSE_CLIENT_CONF}") || return 0
     fi
-    # No point asking the daemon which sink it prefers when it has just said it
-    # has none; the empty list is the thing worth reporting there.
     if [ -z "${target}" ] && [ -n "${sinks}" ]; then
         info=$(sendspin::pactl info) || return 0
         target=$(sendspin::pulse_info_default_sink <<< "${info}") || return 0

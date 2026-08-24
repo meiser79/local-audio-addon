@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
-# Unit checks for the silent-output check in rootfs/usr/lib/sendspin-cli/common.sh -- what it
-# reads from `pactl`, what it warns about, and the line it prints on every start.
+# Unit checks for the silent-output check in rootfs/usr/lib/sendspin-cli/common.sh.
 #
 # `pactl`'s output format is not this repo's to keep stable, and a format that moved would turn
 # the warnings off with no symptom anywhere -- on an image that still builds and still boots. So
@@ -202,7 +201,6 @@ availability unknown'
 
     # Reading the first sink's 74% rather than the second's 0% proves the target name selects
     # the block, and the `Base Volume: ... 100%` under it proves the level came from `Volume:`.
-    # Its port differs from the other sink's too, so the ports are selected per block as well.
     want='0
 alsa_output.pci-0000_00_1f.3.hdmi-stereo
 Built-in Audio Digital Stereo (HDMI)
@@ -309,17 +307,13 @@ check_garbage_is_no_answer() {
 # The active port
 # ==============================================================================
 
-# A sink can be unmuted and up and still inaudible, because it is routed at a socket with
-# nothing in it. Everything below is about telling that apart from the far commoner case of a
-# card that simply cannot tell whether anything is plugged in.
 check_active_port() {
     local out sink
 
     step 'the active port'
 
-    # A port line carries `type:` and an `availability group:` on a modern pactl and neither on
-    # an older one. The availability closes the bracket in both, which is why it is read from
-    # the end rather than by counting the fields in front of it.
+    # A modern pactl carries `type:` and an `availability group:`; an older one carries neither.
+    # The availability closes the bracket in both, which is why it is read from the end.
     sink='Sink #3
 	Name: sink
 	Description: A sink
@@ -347,8 +341,6 @@ not available' "$out" 'the long port-line format parses, id, description and ava
 Analog Output
 not available' "$out" 'the short port-line format parses too'
 
-    # The two values that must not warn, read back as themselves so the warning is judging a
-    # real string rather than a parse that dropped it.
     sink='Sink #3
 	Name: sink
 	Description: A sink
@@ -371,8 +363,6 @@ not available' "$out" 'the short port-line format parses too'
     out=$(sendspin::pulse_sink_state sink <<< "$sink" | sed -n 8p)
     assert_equal 'availability unknown' "$out" 'a card with no jack detection reads as unknown'
 
-    # A port description may carry brackets of its own, and taking the first one would make the
-    # availability the description and lose the availability entirely.
     sink='Sink #3
 	Name: sink
 	Description: A sink
@@ -385,9 +375,8 @@ not available' "$out" 'the short port-line format parses too'
     assert_equal 'Headphones (unplugged)
 not available' "$out" 'brackets inside a port description are kept, and the last one is read'
 
-    # A null sink has no `Ports:` block at all. Folding the port fields into the all-or-nothing
-    # emit guard would turn the mute and level warning off for every sink like it, so the five
-    # original fields have to survive their absence.
+    # Folding the port fields into the all-or-nothing emit guard would turn the mute and level
+    # warning off for every null sink, which has no `Ports:` block at all.
     sink='Sink #3
 	Name: sink
 	Description: A sink
@@ -406,8 +395,6 @@ yes
         *) fail 'and it still gets the mute and level warning' ;;
     esac
 
-    # PulseAudio can name an active port that the block does not describe. That is not the same
-    # as a port it says is unavailable, and it must not be warned about as though it were.
     sink='Sink #3
 	Name: sink
 	Description: A sink
@@ -420,8 +407,6 @@ yes
     assert_equal 'hdmi-output-0' "$out" \
         'an active port absent from the Ports block reads as unknown, not as unavailable'
 
-    # `Properties:` and `Formats:` are indented exactly as port lines are, so only the block a
-    # line sits in keeps a property out of the answer.
     sink='Sink #3
 	Name: sink
 	Description: A sink
@@ -502,9 +487,8 @@ check_the_warning() {
     assert_equal '' "$out" 'a non-numeric level says nothing'
 }
 
-# The remedy here is not a command to paste -- there is no `ha audio` verb that moves a port --
-# so the words themselves are the whole fix, and they are pinned as literally as the
-# `ha audio volume output` lines above are.
+# No `ha audio` verb moves a port, so the words are the whole remedy and are pinned as literally
+# as the `ha audio volume output` lines above.
 check_the_port_warning() {
     local out
 
@@ -533,8 +517,7 @@ check_the_port_warning() {
     esac
 
     # The crux. `availability unknown` is what a card with no jack detection reports for every
-    # port it has, which is most line-outs, and warning about a working desktop line-out would
-    # be worse than the silence this exists to explain. Only the literal `not available` warns.
+    # port it has, so warning on it would go off on most working line-outs.
     out=$(sendspin::warn_if_port_is_unavailable 7 a-sink analog-output 'Analog Output' 'available' 2>&1)
     assert_equal '' "$out" 'an available port says nothing'
 
@@ -547,13 +530,9 @@ check_the_port_warning() {
     out=$(sendspin::warn_if_port_is_unavailable 7 a-sink analog-output 'Analog Output' 'nicht verfugbar' 2>&1)
     assert_equal '' "$out" 'an unrecognised availability string says nothing'
 
-    # A moved format that started reporting `not available yet` or `not available (jack)` would
-    # be a new string, and a loose match on it would warn about every port on the machine.
     out=$(sendspin::warn_if_port_is_unavailable 7 a-sink analog-output 'Analog Output' 'not available yet' 2>&1)
     assert_equal '' "$out" 'only the exact string warns, not anything containing it'
 
-    # pactl can leave a port undescribed, and naming it as ` (analog-output)` reads as a dropped
-    # word rather than as a port with no name of its own.
     out=$(sendspin::warn_if_port_is_unavailable 7 a-sink analog-output '' 'not available' 2>&1)
     case $out in
         *'playing out of analog-output, which PulseAudio reports as not available.'*)
@@ -564,9 +543,8 @@ check_the_port_warning() {
     esac
 }
 
-# The line every start prints, healthy or not. The report this check was written from had
-# nothing in the log to go on because a healthy start said nothing, so its being there at all is
-# what is being asserted.
+# The line every start prints, healthy or not: a silent healthy start is why the report this was
+# written from had nothing in the log to go on.
 check_the_report_line() {
     local out
 
@@ -579,7 +557,6 @@ check_the_report_line() {
     out=$(sendspin::report_output 7 a-sink 'A Sink' 74 analog-output-lineout 'Line Out' 2>&1 | wc -l)
     assert_equal '1' "$out" 'it is exactly one line'
 
-    # A sink with no `Ports:` block is legitimate, and the line still has to name the output.
     out=$(sendspin::report_output 7 a-sink 'A Sink' 74 '' '' 2>&1)
     assert_equal 'Playing through sink #7, a-sink (A Sink), at 74%.' "$out" \
         'a sink with no port is still named, without a trailing fragment'
@@ -589,8 +566,7 @@ check_the_report_line() {
         'a port with no description falls back to its id'
 }
 
-# The two cases the check used to return from without a word. Both are themselves the fault
-# being looked for, so silence there read as a healthy start while the audio went nowhere.
+# The two cases the check used to return from without a word, each of them the fault itself.
 check_the_bail_outs() {
     local out
 
@@ -602,8 +578,6 @@ check_the_bail_outs() {
         *) fail 'an empty sink list is reported'; printf '    got: %q\n' "$out" >&2 ;;
     esac
 
-    # An unplugged USB DAC, or a card renamed under it. libpulse falls back to the daemon
-    # default without saying so, so the audio comes out of some other device entirely.
     out=$(sendspin::report_on_sinks alsa_output.usb-gone-00.analog-stereo "$TWO_SINKS" 2>&1)
     case $out in
         *'alsa_output.usb-gone-00.analog-stereo, is not among the outputs PulseAudio lists.'*)
@@ -618,9 +592,8 @@ check_the_bail_outs() {
         *) fail 'and the outputs that are there are listed, so the right one can be picked' ;;
     esac
 
-    # The same empty reading for the opposite reason: the sink is right there in the list, so
-    # what failed was reading it. Telling the reader to pick a different output would send them
-    # after a selection that was never wrong.
+    # The same empty reading for the opposite reason: the sink is listed, so what failed was
+    # reading it, and a wrong Audio panel selection is the wrong thing to send the reader after.
     out=$(sendspin::report_on_sinks alsa_output.usb-Topping_D10s-00.analog-stereo \
         'Sink #7
 	Name: alsa_output.usb-Topping_D10s-00.analog-stereo
@@ -645,8 +618,7 @@ check_the_bail_outs() {
     assert_equal 'alsa_output.pci-0000_00_1f.3.hdmi-stereo
 alsa_output.usb-Topping_D10s-00.analog-stereo' "$out" 'the sink names are exactly the sinks'
 
-    # A boot must not turn on whether PulseAudio answered, so nothing in here may return
-    # non-zero -- including the paths that now log.
+    # A boot must not turn on whether PulseAudio answered, including on the paths that now log.
     sendspin::report_on_sinks '' '' > /dev/null 2>&1
     pass 'no sinks and no target still returns success'
     sendspin::report_on_sinks alsa_output.usb-gone-00.analog-stereo "$TWO_SINKS" > /dev/null 2>&1
@@ -683,8 +655,6 @@ check_end_to_end() {
             printf '    got: %q\n' "$out" >&2 ;;
     esac
 
-    # That same sink's port reports `availability unknown`, which is the commonest reading on a
-    # card with no jack detection. The level warning above is the only thing that should fire.
     out=$(sendspin::warn_if_port_is_unavailable "${field[0]}" "${field[1]}" \
         "${field[5]}" "${field[6]}" "${field[7]}" 2>&1)
     assert_equal '' "$out" 'its unknown port availability adds nothing to that warning'
@@ -704,8 +674,8 @@ check_end_to_end() {
         "${field[3]}" "${field[4]}" 2>&1)
     assert_equal '' "$out" 'the server default resolves to the healthy sink and says nothing'
 
-    # Healthy on level and mute, but its HDMI port is `not available` -- the cable is out. The
-    # sink warning has nothing to say about it, and that is exactly the gap this check closes.
+    # Healthy on level and mute, but its HDMI port is `not available` -- the cable is out, which
+    # is exactly the gap the sink warning cannot see.
     out=$(sendspin::warn_if_port_is_unavailable "${field[0]}" "${field[1]}" \
         "${field[5]}" "${field[6]}" "${field[7]}" 2>&1)
     case $out in
