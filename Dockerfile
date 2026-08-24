@@ -77,8 +77,8 @@ LABEL \
     org.opencontainers.image.version="${SENDSPIN_CLI_REF}" \
     org.opencontainers.image.licenses="Apache-2.0"
 
-# libasound2-plugins carries the ALSA-to-Pulse bridge, which is what makes
-# `output: default` work on Home Assistant OS, where /etc/asound.conf routes
+# libasound2-plugins carries the ALSA-to-Pulse bridge, which is what makes the
+# `default` output work on Home Assistant OS, where /etc/asound.conf routes
 # `default` to Home Assistant's PulseAudio. libstdc++6 is already present in any
 # image with apt, but the player links it, so it is named rather than inherited.
 RUN apt-get update \
