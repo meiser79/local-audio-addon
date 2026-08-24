@@ -5,8 +5,6 @@ source /usr/lib/sendspin-cli/common.sh
 
 sendspin::decide_daemons
 
-# Advisory, and deliberately last: it is the check that talks to something
-# outside this container, and nothing the player needs depends on its answer.
-# Every path inside it already returns success; this guard covers the ones it
-# cannot foresee, because a boot must not turn on whether PulseAudio answered.
+# Last, and guarded even though every path inside already returns success: a
+# boot must not turn on whether PulseAudio answered.
 sendspin::check_output_is_audible || true

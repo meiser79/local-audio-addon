@@ -82,10 +82,10 @@ LABEL \
 # `default` to Home Assistant's PulseAudio. libstdc++6 is already present in any
 # image with apt, but the player links it, so it is named rather than inherited.
 #
-# pulseaudio-utils is `pactl`, which the sendspin-init oneshot uses to read the
-# selected sink's level once and warn if it is silent. It costs two packages on
-# top of the above -- libpulse0 already comes in with libasound2-plugins -- and
-# no Supervisor permission, which the /audio API route would have needed.
+# pulseaudio-utils is `pactl`, which sendspin-init uses to read the selected
+# sink's level and warn if it is silent. Two packages on top of the above --
+# libasound2-plugins already brings libpulse0 -- and no Supervisor permission,
+# where the /audio API route would have needed one.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         avahi-daemon \

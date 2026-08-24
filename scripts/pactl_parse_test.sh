@@ -2,13 +2,12 @@
 #
 # Unit checks for the silent-output warning in rootfs/usr/lib/sendspin-cli/common.sh.
 #
-# The warning is only as good as its reading of `pactl` text, and that text is not this repo's
-# to keep stable: a pactl whose format moves would otherwise turn the warning off with no
-# symptom anywhere, on an image that still builds and still boots. So the parsing is pinned
-# here against canned output rather than left to be noticed in a log.
+# `pactl`'s output format is not this repo's to keep stable, and a format that moved would turn
+# the warning off with no symptom anywhere -- on an image that still builds and still boots. So
+# it is pinned here against canned output rather than left to be noticed in a log.
 #
 # The fixtures are real `pactl` output, trimmed of the property and port blocks that follow
-# every sink -- except where a check is about those blocks not being mistaken for sink fields.
+# every sink, except where a check is about those not being mistaken for sink fields.
 #
 # Needs: bash and awk. No docker, no image, no PulseAudio.
 #
@@ -37,8 +36,8 @@ step() {
     printf '\n%s\n' "$1"
 }
 
-# Every assertion goes through here, so a mismatch always prints both sides rather than just
-# the name of the check that went red.
+# Every assertion goes through here, so a mismatch prints both sides rather than just the name
+# of the check that went red.
 assert_equal() {
     local want=$1 got=$2 what=$3
     if [ "$want" = "$got" ]; then
@@ -53,10 +52,9 @@ assert_equal() {
 # The fixtures
 # ==============================================================================
 
-# Two sinks, so that picking the right one is asserted rather than assumed: the HDMI sink is
-# first and healthy, the analog sink the add-on plays to is second and silent. Both carry the
-# `Base Volume:` line, which is the hardware reference level and reads exactly like the level
-# being looked for.
+# Two sinks, so picking the right one is asserted rather than assumed: the HDMI sink is first
+# and healthy, the analog one the add-on plays to is second and silent. Both carry the
+# `Base Volume:` line, which reads exactly like the level being looked for.
 readonly TWO_SINKS='Sink #0
 	State: SUSPENDED
 	Name: alsa_output.pci-0000_00_1f.3.hdmi-stereo
@@ -129,9 +127,8 @@ check_client_conf_default_sink() {
 
     step 'the sink comes from client.conf'
 
-    # The shape the Supervisor renders per add-on, with the commented-out defaults PulseAudio
-    # ships around it. `;` is PulseAudio's comment character, and a commented default-sink is
-    # exactly what an add-on with no Audio panel selection gets.
+    # The shape the Supervisor renders, around the commented-out defaults PulseAudio ships.
+    # `;` is PulseAudio's comment character.
     conf='# Home Assistant audio configuration
 default-server = unix:/run/audio/pulse.sock
 ; default-sink = something-else
@@ -148,9 +145,8 @@ autospawn = no'
     out=$(sendspin::pulse_conf_default_sink <<< "$conf")
     assert_equal '' "$out" 'no default-sink reads as no answer, not as an empty sink name'
 
-    # The key present with nothing after it, which is what the Supervisor renders when the
-    # Audio panel has no selection. It has to read as no answer rather than as a sink named
-    # the empty string: it is the whole trigger for falling back to the server's own default.
+    # The key with nothing after it, which is what an unset Audio panel selection renders as.
+    # It has to read as no answer, because that is the whole trigger for the server fallback.
     conf='default-server = unix:/run/audio/pulse.sock
 default-sink =
 autospawn = no'
@@ -177,8 +173,8 @@ check_server_default_sink() {
     assert_equal 'alsa_output.pci-0000_00_1f.3.hdmi-stereo' "$out" \
         "the daemon's default sink is read from pactl info"
 
-    # `Default Source:` is the very next line and its name is the sink's with a suffix, so a
-    # loose match here would silently inspect the monitor source instead of the sink.
+    # `Default Source:` is the very next line and its name is the sink's plus a suffix, so a
+    # loose match would inspect the monitor source instead.
     out=$(sendspin::pulse_info_default_sink <<< 'Default Source: alsa_output.hdmi.monitor')
     assert_equal '' "$out" 'Default Source is not mistaken for Default Sink'
 }
@@ -200,10 +196,8 @@ no
     out=$(sendspin::pulse_sink_state 'alsa_output.usb-Topping_D10s-00.analog-stereo' <<< "$TWO_SINKS")
     assert_equal "$want" "$out" 'index, name, description, mute and level all parse'
 
-    # The first sink in the list is the healthy one. Reading its 74% rather than the second
-    # sink's 0% is what proves the target name selects the block, and `Base Volume: ... 100%`
-    # sitting under it is what proves the level is the `Volume:` line and not the next one
-    # that looks like it.
+    # Reading the first sink's 74% rather than the second's 0% proves the target name selects
+    # the block, and the `Base Volume: ... 100%` under it proves the level came from `Volume:`.
     want='0
 alsa_output.pci-0000_00_1f.3.hdmi-stereo
 Built-in Audio Digital Stereo (HDMI)
@@ -230,8 +224,7 @@ check_mute_and_level() {
     out=$(sendspin::pulse_sink_state sink <<< "$sink" | sed -n 4p)
     assert_equal 'yes' "$out" 'a muted sink reports its mute flag'
 
-    # Only one channel is down. The loudest decides, because a sink is silent only when every
-    # channel of it is -- and a lone quiet channel is a balance setting, not a fault.
+    # The loudest channel decides: one channel down is a balance setting, not silence.
     sink='Sink #3
 	Name: sink
 	Description: A sink
@@ -250,8 +243,7 @@ check_mute_and_level() {
     out=$(sendspin::pulse_sink_state sink <<< "$sink" | sed -n 5p)
     assert_equal '0' "$out" 'every channel down is a level of zero'
 
-    # PulseAudio allows a sink above 100%, and `pactl` prints it. Three digits must not read
-    # as some other number.
+    # PulseAudio allows a sink above 100%, and three digits must not read as some other number.
     sink='Sink #3
 	Name: sink
 	Description: A sink
@@ -273,8 +265,8 @@ check_garbage_is_no_answer() {
     out=$(sendspin::pulse_sink_state sink <<< 'Connection failure: Connection refused')
     assert_equal '' "$out" 'an error message reads as no answer'
 
-    # The single field this check turns on. A format change that drops or renames it must
-    # read as "could not tell", never as an audible sink.
+    # The one field the whole check turns on: losing it must read as "could not tell", never
+    # as an audible sink.
     sink='Sink #3
 	Name: sink
 	Description: A sink
@@ -291,8 +283,8 @@ check_garbage_is_no_answer() {
     out=$(sendspin::pulse_sink_state sink <<< "$sink")
     assert_equal '' "$out" 'a Volume line with no percentage in it reads as no answer'
 
-    # Properties are indented one level deeper than sink fields, which is the only thing
-    # keeping a property called `Name` out of the answer.
+    # Properties are indented deeper than sink fields, which is the only thing keeping a
+    # property called `Name` out of the answer.
     sink='Sink #3
 	Name: sink
 	Description: A sink
@@ -309,8 +301,8 @@ check_garbage_is_no_answer() {
 # What gets said
 # ==============================================================================
 
-# The whole point of the check is what a user reads in the log, so the message is asserted
-# rather than only the numbers behind it.
+# What a user reads in the log is the point of the check, so the message is asserted and not
+# only the numbers behind it.
 check_the_warning() {
     local out
 
@@ -336,8 +328,8 @@ check_the_warning() {
         *) fail "the warning says Music Assistant's volume will not fix it" ;;
     esac
 
-    # The two lines a user is meant to paste. Pinned exactly, including the index, because a
-    # remedy that has to be worked out is the dead end this warning exists to end.
+    # The two lines a user is meant to paste, pinned exactly: a remedy that has to be worked
+    # out is the dead end this warning exists to end.
     case $out in
         *'    ha audio volume output --index 7 --unmute'*) pass 'the unmute command is spelled out with the index' ;;
         *) fail 'the unmute command is spelled out with the index' ;;
@@ -359,8 +351,8 @@ check_the_warning() {
         *) fail 'both at once are named together' ;;
     esac
 
-    # Nothing downstream of the reading validates it, so a level the parser could not make
-    # sense of must not produce a warning about a sink that may be perfectly audible.
+    # Nothing downstream validates the reading, so a level the parser could not make sense of
+    # must not warn about a sink that may be perfectly audible.
     out=$(sendspin::warn_if_sink_is_silent 7 a-sink 'A Sink' no '' 2>&1)
     assert_equal '' "$out" 'an unparseable level says nothing'
 
@@ -372,8 +364,8 @@ check_the_warning() {
 # End to end, against the fixtures
 # ==============================================================================
 
-# The reading and the warning wired together the way the oneshot wires them, so a change that
-# breaks the seam between them fails here rather than in someone's log.
+# Wired together the way the oneshot wires them, so a change that breaks the seam between them
+# fails here rather than in someone's log.
 check_end_to_end() {
     local out state
     local -a field
@@ -394,9 +386,9 @@ check_end_to_end() {
             printf '    got: %q\n' "$out" >&2 ;;
     esac
 
-    # The same list, with the server default selected instead. It is the healthy sink, so
-    # taking this path when client.conf names the silent one would warn about nothing while
-    # the add-on played to silence.
+    # The same list with the server default selected instead. It resolves to the healthy sink,
+    # so preferring this path over client.conf would warn about nothing while the add-on played
+    # to silence.
     state=$(sendspin::pulse_sink_state \
         "$(sendspin::pulse_info_default_sink <<< "$PACTL_INFO")" <<< "$TWO_SINKS")
     mapfile -t field <<< "$state"

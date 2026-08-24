@@ -137,28 +137,23 @@ sendspin::redact_server() {
 # ==============================================================================
 # The silent-output check
 #
-# Home Assistant's PulseAudio sink is shared state: every add-on plays through
-# it, module-device-restore makes a level set once survive reboots, and the
-# player applies Music Assistant's volume as software gain over the PCM rather
-# than through a mixer. A sink another add-on left at zero, or muted, is
-# therefore silence at every position of the slider, and nothing in Music
-# Assistant can say so. Reported at start, never corrected: the level belongs to
-# the user's Audio panel, and raising it here would override a deliberately low
-# setting on every restart and every update.
+# The player applies Music Assistant's volume as software gain and opens no
+# mixer, and module-device-restore makes a sink level outlive a reboot. So a
+# sink another add-on left at zero is silence at every slider position, with
+# nothing able to say so. Reported, never corrected: the level is the Audio
+# panel's, and writing it would override a deliberately low one on every start.
 # ==============================================================================
 
-# Bounded, and pinned to the socket the caller has already found, so a
-# PulseAudio that is up but not answering costs three seconds rather than the
-# oneshot's whole 30s timeout-up. LC_ALL=C because pactl's output is translated
-# and the keys parsed below are translated with it.
+# Bounded, so a PulseAudio that is up but not answering costs three seconds
+# rather than the oneshot's whole 30s timeout-up. LC_ALL=C because pactl's
+# output is translated, and the keys parsed below with it.
 sendspin::pactl() {
     LC_ALL=C PULSE_SERVER="unix:${PULSE_SOCKET}" timeout 3 pactl "$@" 2> /dev/null
 }
 
-# `default-sink` from a PulseAudio client.conf on stdin, or nothing. The
-# Supervisor renders that file per add-on from the Audio panel selection and
-# bind-mounts it in, so this key is the device a user picked. Last assignment
-# wins, as it does for PulseAudio itself.
+# `default-sink` from a client.conf on stdin. The Supervisor renders that file
+# per add-on from the Audio panel selection, so this key is the device the user
+# picked. Last assignment wins, as it does for PulseAudio itself.
 sendspin::pulse_conf_default_sink() {
     awk '
         /^[[:space:]]*[;#]/ { next }
@@ -171,31 +166,28 @@ sendspin::pulse_conf_default_sink() {
     '
 }
 
-# The daemon's own default sink, from `pactl info` on stdin. Only a fallback:
-# the ALSA pulse plugin connects its stream with a NULL device and libpulse
-# substitutes the *client* default, so client.conf is the answer whenever it
-# carries one.
+# The daemon's default sink, from `pactl info` on stdin. Only a fallback: the
+# ALSA pulse plugin connects with a NULL device and libpulse then substitutes
+# the *client* default, so client.conf wins whenever it carries one.
 sendspin::pulse_info_default_sink() {
     sed -n 's/^Default Sink:[[:space:]]*//p' | tail -n 1
 }
 
 # Index, name, description, mute and level of the sink named "$1", one field
-# per line, from `pactl list sinks` on stdin. Prints nothing at all unless the
-# sink is there and every field parsed, so a pactl whose format has moved reads
-# as "no answer" rather than as a healthy output.
+# per line, from `pactl list sinks` on stdin. Prints nothing unless every field
+# parsed, so a pactl whose format has moved reads as "no answer" rather than as
+# a healthy sink.
 sendspin::pulse_sink_state() {
     awk -v target="$1" '
-        # Sink fields are indented one tab; the properties and ports below them
-        # are indented further, which is what keeps them out of these matches.
         function value(line) {
             sub(/^[^:]*:[[:space:]]*/, "", line)
             sub(/[[:space:]]+$/, "", line)
             return line
         }
 
-        # A per-channel line: `front-left: 32768 /  74% / -7.85 dB, ...`. The
-        # loudest channel decides, so a sink is silent only when every channel
-        # is. An empty return means no percentage was found at all.
+        # The loudest channel decides: a sink is silent only when every channel
+        # of it is, and one quiet channel is a balance setting. Empty means no
+        # percentage was there to read.
         function loudest(line,   best, pct) {
             best = ""
             while (match(line, /[0-9]+%/)) {
@@ -220,21 +212,21 @@ sendspin::pulse_sink_state() {
             if (match($0, /[0-9]+/)) idx = substr($0, RSTART, RLENGTH)
             next
         }
+        # One tab exactly: properties and ports are indented further, and
+        # `Base Volume:` -- the hardware reference level -- does not start its
+        # key at the tab.
         /^\tName:/        { name = value($0); next }
         /^\tDescription:/ { description = value($0); next }
         /^\tMute:/        { mute = value($0); next }
-        # `Base Volume:` is the hardware reference level and is not this; it
-        # does not match because the key here starts right after the tab.
         /^\tVolume:/      { level = loudest($0); next }
 
         END { emit() }
     '
 }
 
-# The warning itself, given a sink's state. Says nothing for an audible sink:
-# a healthy start has to be indistinguishable from one where the check never
-# ran. Separate from the reading above so both are exercised by
-# scripts/pactl_parse_test.sh.
+# Says nothing for an audible sink: a healthy start has to read the same as one
+# where the check never ran. Kept apart from the reading above so that
+# scripts/pactl_parse_test.sh can exercise both.
 sendspin::warn_if_sink_is_silent() {
     local idx=$1 name=$2 description=$3 mute=$4 level=$5
     local state
@@ -262,17 +254,15 @@ sendspin::warn_if_sink_is_silent() {
     sendspin::log 'The level is shared with every other add-on on this machine, which is why this one will not set it for you.'
 }
 
-# Read the selected output's state and warn if it is silent. Advisory only, so
-# every path here returns success: the oneshot runs under `set -euo pipefail`
-# with a 30s budget, and a PulseAudio that cannot be reached must be a shrug in
-# the log rather than a container that never starts.
+# Advisory, so every path here returns success: the oneshot runs under
+# `set -euo pipefail`, and a PulseAudio that cannot be reached must be a shrug
+# rather than a container that never starts.
 sendspin::check_output_is_audible() {
     local sinks info target state
     local -a field
 
-    # Compose has no PulseAudio at all -- `default` is ALSA's own default over
-    # /dev/snd -- so there is no sink to have an opinion about. Silence here is
-    # the whole behaviour, not a fallback.
+    # Compose has no PulseAudio at all, so there is no sink to have an opinion
+    # about. Saying nothing is the whole behaviour here, not a fallback.
     [ -S "${PULSE_SOCKET}" ] || return 0
 
     sinks=$(sendspin::pactl list sinks) || return 0

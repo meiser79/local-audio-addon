@@ -58,9 +58,8 @@ jobs:
       # is a directive in each of five shipped files.
       #
       # The second invocation carries `-x` too, because pactl_parse_test.sh sources that same
-      # library to test it. `SCRIPTDIR` is what resolves its relative `source` path against the
-      # script rather than the working directory, which is the only thing that makes the run
-      # independent of where it is started from.
+      # library to test it, and `SCRIPTDIR` resolves its relative `source` path against the
+      # script rather than the working directory the run happened to start in.
       #
       # shellcheck is the runner image's preinstall and floats with it, unlike actionlint above:
       # GitHub-maintained tooling that fails loud at lint time does not need a digest of its own.
@@ -73,8 +72,8 @@ jobs:
             rootfs/etc/s6-overlay/s6-rc.d/*/finish
           shellcheck -x --source-path=SCRIPTDIR scripts/*.sh
 
-      # The unit half of the suite: it needs no image, so it runs beside the linters rather than
-      # waiting behind a build that compiles the player from source.
+      # Needs no image, so it runs beside the linters rather than behind a build that compiles
+      # the player from source.
       - name: Test the pactl parsing
         run: scripts/pactl_parse_test.sh
 
