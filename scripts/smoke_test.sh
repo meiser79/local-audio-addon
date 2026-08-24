@@ -539,6 +539,20 @@ check_advertise_mode() {
     refute_log "$container" 'could not register' \
         'the registration was not refused on the way there'
 
+    # The silent-output check, on the only path either mode can put it on: neither delivers a
+    # PulseAudio, so there is no /run/audio/pulse.sock and the check has to be a no-op. The
+    # player being up above means the oneshot ran to the end, so this absence means something.
+    # A check that started narrating on a Compose container would be noise in every log that
+    # never had a sink in the first place.
+    refute_log "$container" 'The Home Assistant audio output this player plays through' \
+        'no PulseAudio means the silent-output check says nothing at all'
+
+    # And the tool it needs when there is one. Nothing else in the image uses `pactl`, so a
+    # dropped Dockerfile line would take the warning with it and leave every other check green.
+    docker exec "$container" sh -c 'command -v pactl' >/dev/null 2>&1 ||
+        fail 'pactl is not in the image -- the silent-output check could never run'
+    pass 'pactl is in the image for the silent-output check'
+
     # `avahi-browse` would be the other half of this -- resolving the record from outside the
     # player -- but the image ships no avahi-utils, and installing them into the container under
     # test would change the subject of the test. The register line above is the daemon's own

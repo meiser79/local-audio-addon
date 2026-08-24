@@ -57,6 +57,11 @@ jobs:
       # `#!/command/with-contenv bash` is a shebang shellcheck does not know, and the alternative
       # is a directive in each of five shipped files.
       #
+      # The second invocation carries `-x` too, because pactl_parse_test.sh sources that same
+      # library to test it. `SCRIPTDIR` is what resolves its relative `source` path against the
+      # script rather than the working directory, which is the only thing that makes the run
+      # independent of where it is started from.
+      #
       # shellcheck is the runner image's preinstall and floats with it, unlike actionlint above:
       # GitHub-maintained tooling that fails loud at lint time does not need a digest of its own.
       - name: Lint the shell scripts
@@ -66,7 +71,12 @@ jobs:
             rootfs/usr/lib/sendspin-cli/decide-daemons \
             rootfs/etc/s6-overlay/s6-rc.d/*/run \
             rootfs/etc/s6-overlay/s6-rc.d/*/finish
-          shellcheck scripts/*.sh
+          shellcheck -x --source-path=SCRIPTDIR scripts/*.sh
+
+      # The unit half of the suite: it needs no image, so it runs beside the linters rather than
+      # waiting behind a build that compiles the player from source.
+      - name: Test the pactl parsing
+        run: scripts/pactl_parse_test.sh
 
       # sync-store.yml fires on release.yml's `name:`, and GitHub matches the pair silently: a
       # renamed Release would unhook the store sync with no symptom anywhere. Asserted here so
