@@ -551,6 +551,17 @@ check_the_port_warning() {
     # be a new string, and a loose match on it would warn about every port on the machine.
     out=$(sendspin::warn_if_port_is_unavailable 7 a-sink analog-output 'Analog Output' 'not available yet' 2>&1)
     assert_equal '' "$out" 'only the exact string warns, not anything containing it'
+
+    # pactl can leave a port undescribed, and naming it as ` (analog-output)` reads as a dropped
+    # word rather than as a port with no name of its own.
+    out=$(sendspin::warn_if_port_is_unavailable 7 a-sink analog-output '' 'not available' 2>&1)
+    case $out in
+        *'playing out of analog-output, which PulseAudio reports as not available.'*)
+            pass 'a port with no description is named by its id alone' ;;
+        *)
+            fail 'a port with no description is named by its id alone'
+            printf '    got: %q\n' "$out" >&2 ;;
+    esac
 }
 
 # The line every start prints, healthy or not. The report this check was written from had
@@ -605,6 +616,27 @@ check_the_bail_outs() {
         *'    alsa_output.pci-0000_00_1f.3.hdmi-stereo'*'    alsa_output.usb-Topping_D10s-00.analog-stereo'*)
             pass 'and the outputs that are there are listed, so the right one can be picked' ;;
         *) fail 'and the outputs that are there are listed, so the right one can be picked' ;;
+    esac
+
+    # The same empty reading for the opposite reason: the sink is right there in the list, so
+    # what failed was reading it. Telling the reader to pick a different output would send them
+    # after a selection that was never wrong.
+    out=$(sendspin::report_on_sinks alsa_output.usb-Topping_D10s-00.analog-stereo \
+        'Sink #7
+	Name: alsa_output.usb-Topping_D10s-00.analog-stereo
+	Description: D10s Analog Stereo
+	Mute: no' 2>&1)
+    case $out in
+        *'is listed by PulseAudio but could not be read.'*)
+            pass 'a sink that is listed but unreadable is not called missing' ;;
+        *)
+            fail 'a sink that is listed but unreadable is not called missing'
+            printf '    got: %q\n' "$out" >&2 ;;
+    esac
+    case $out in
+        *'Pick one of them'*)
+            fail 'and it does not tell the reader to pick a different output' ;;
+        *) pass 'and it does not tell the reader to pick a different output' ;;
     esac
 
     # `Name:` is on the monitor source line too, and on properties, so a loose match would list

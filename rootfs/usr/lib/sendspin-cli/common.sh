@@ -345,11 +345,17 @@ sendspin::warn_if_sink_is_silent() {
 # else, an unrecognised string included, says nothing.
 sendspin::warn_if_port_is_unavailable() {
     local idx=$1 name=$2 port=$3 description=$4 availability=$5
+    local port_text
 
     [ "${availability}" = 'not available' ] || return 0
 
+    port_text="${port}"
+    if [ -n "${description}" ]; then
+        port_text="${description} (${port})"
+    fi
+
     sendspin::log "The Home Assistant audio output this player plays through is routed to a socket with nothing plugged into it, so nothing it plays will be heard."
-    sendspin::log "That output is sink #${idx}, ${name}, and it is playing out of ${description} (${port}), which PulseAudio reports as not available."
+    sendspin::log "That output is sink #${idx}, ${name}, and it is playing out of ${port_text}, which PulseAudio reports as not available."
     sendspin::log 'Music Assistant volume cannot fix it: the audio is reaching an empty socket whatever the level is set to.'
     sendspin::log 'Plug into that socket, or pick an output that is plugged in from the Home Assistant Audio panel.'
     sendspin::log 'The routing is shared with every other add-on on this machine, which is why this one will not change it for you.'
@@ -391,9 +397,22 @@ sendspin::report_on_sinks() {
 
     state=$(sendspin::pulse_sink_state "${target}" <<< "${sinks}") || return 0
     if [ -z "${state}" ]; then
+        mapfile -t names < <(sendspin::pulse_sink_names <<< "${sinks}")
+
+        # Nothing came back for two quite different reasons, and saying the
+        # wrong one sends the reader after the wrong thing. The sink being in
+        # the list means it was pactl's format that could not be read, not the
+        # Audio panel selection that was wrong.
+        for name in "${names[@]}"; do
+            if [ "${name}" = "${target}" ]; then
+                sendspin::log "The Home Assistant audio output this player plays through, ${target}, is listed by PulseAudio but could not be read."
+                sendspin::log 'That is this add-on failing to parse pactl, not a fault with the output, and it means nothing here can say whether the output is audible.'
+                return 0
+            fi
+        done
+
         sendspin::log "The Home Assistant audio output this player is set to play through, ${target}, is not among the outputs PulseAudio lists."
         sendspin::log 'PulseAudio falls back to its own default when that happens, so the audio is going to some other device, or to nowhere.'
-        mapfile -t names < <(sendspin::pulse_sink_names <<< "${sinks}")
         if [ "${#names[@]}" -gt 0 ]; then
             sendspin::log 'The outputs it does list are:'
             for name in "${names[@]}"; do
