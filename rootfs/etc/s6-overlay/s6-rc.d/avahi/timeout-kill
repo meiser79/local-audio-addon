@@ -1,0 +1,9 @@
+2000
+# The number is line 1; s6 stops reading there, so nothing may precede it.
+#
+# The service that wedged: an avahi-daemon that never answered its down signal
+# held the shutdown open past the Supervisor's 10s and took a SIGKILL with the
+# whole container. Nothing bounded that, because s6-supervise waits forever by
+# default and the shutdown's `s6-rc -bda change` sets no timeout of its own.
+# Twenty times the longest stop measured here, and the Dockerfile's
+# S6_KILL_GRACETIME comment carries the arithmetic against the 10s.

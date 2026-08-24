@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.3
+
+Fixes the error Home Assistant recorded every time this app was stopped.
+
+- Stopping the app no longer ends in `exited with non-zero exit code 137`. The
+  shutdown had no deadline of its own, so a bundled daemon that did not answer
+  its stop signal held the container open until Home Assistant gave up after ten
+  seconds and killed it. Each service now gets two seconds to stop before it is
+  killed, which keeps the whole shutdown inside the time Home Assistant allows.
+  The app always did reach Stopped; what changes is that it now gets there
+  cleanly rather than being recorded as a failure.
+- The AppArmor profile's three child profiles accept every signal the app is
+  allowed to send them. `SIGCONT` was missing from all three, and s6 sends it
+  alongside `SIGTERM` on every ordinary stop, so each stop took a denial.
+
 ## 0.1.2
 
 Built on `sendspin-cli` v0.1.1.

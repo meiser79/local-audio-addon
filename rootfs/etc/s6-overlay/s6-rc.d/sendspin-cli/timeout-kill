@@ -1,0 +1,6 @@
+2000
+# The number is line 1; s6 stops reading there, so nothing may precede it.
+#
+# Same bound as avahi. The player already stops in tens of milliseconds, but it
+# is first in the shutdown order, so a hang here would cost the two daemons
+# behind it their chance to stop cleanly as well.
