@@ -110,15 +110,16 @@ binary for the wrong one.
 ## Home Assistant app
 
 `local_audio/` is the app manifest, wrapping this same image, so the runtime
-behaviour described above is shared. It reads its `name`, `output`, `log_level`
-and `server` from the app options instead of the environment.
+behaviour described above is shared. It reads its `name`, `log_level` and
+`server` from the app options instead of the environment.
 
-The app plays through the PulseAudio that Home Assistant maps in, and the
-sound card is chosen in the app's own Audio panel. It cannot open a card
-directly: the Supervisor grants an app no cgroup rule for the sound devices
-unless the app also asks for every other device on the machine. `hw:` and
-`plughw:` outputs are therefore a Compose-only capability, which is the reason
-to run the container rather than the app for an exclusively-held DAC.
+The app plays through the PulseAudio that Home Assistant maps in, and the sound
+card is chosen in the app's own Audio panel — it offers no output option of its
+own. It cannot open a card directly: the Supervisor grants an app no cgroup rule
+for the sound devices unless the app also asks for every other device on the
+machine. `hw:` and `plughw:` outputs are therefore a Compose-only capability,
+which is the reason to run the container rather than the app for an
+exclusively-held DAC.
 
 ## Store card sync
 

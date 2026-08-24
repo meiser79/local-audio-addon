@@ -33,6 +33,9 @@ sendspin::read_options() {
             || bashio::exit.nok 'Could not read the add-on options from the Supervisor.'
 
         SENDSPIN_NAME=$(sendspin::option "${config}" 'name')
+        # Not settable from the add-on any more: absent from the Supervisor's
+        # config it falls through to the default below. The read stays so the
+        # stand-in Supervisor in scripts/smoke_test.sh can still deliver one.
         SENDSPIN_OUTPUT=$(sendspin::option "${config}" 'output')
         SENDSPIN_LOG_LEVEL=$(sendspin::option "${config}" 'log_level')
         SENDSPIN_SERVER=$(sendspin::option "${config}" 'server')
