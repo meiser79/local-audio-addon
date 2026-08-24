@@ -1,0 +1,6 @@
+2000
+# The number is line 1; s6 stops reading there, so nothing may precede it.
+#
+# Same bound as avahi, for the same reason: an unbounded wait on any one longrun
+# is what loses the whole container to a SIGKILL. dbus comes down last and has
+# never been the one to hang, so this is a backstop rather than a fix.

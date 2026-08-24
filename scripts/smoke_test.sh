@@ -95,14 +95,19 @@ readonly SUPERVISOR_TOKEN=smoke-supervisor-token
 readonly SUPERVISOR_HOST=supervisor
 
 # Sized for a loaded shared CI runner rather than a laptop: being generous costs nothing unless
-# something is already wrong, and every wait returns as soon as its condition holds. The stop
-# timeout is the one exception -- it is handed to `docker stop`, so it is the grace period the s6
-# shutdown is held to rather than a deadline on a poll. The health timeout is long because it is
-# waiting on Docker's own schedule: the HEALTHCHECK has a 30s start period and a 30s interval.
+# something is already wrong, and every wait returns as soon as its condition holds. The health
+# timeout is long because it is waiting on Docker's own schedule: the HEALTHCHECK has a 30s start
+# period and a 30s interval.
 readonly BOOT_TIMEOUT_S=60
-readonly STOP_TIMEOUT_S=20
 readonly EXIT_TIMEOUT_S=60
 readonly HEALTH_TIMEOUT_S=150
+
+# The one deadline that is not ours to choose. It is handed to `docker stop`, so it is the grace
+# period the s6 shutdown is held to rather than a deadline on a poll. 10 is the Supervisor's own
+# add-on `timeout` option, which defaults to 10 and which local_audio/config.yaml does not set.
+# Anything more generous here passes a shutdown that real Home Assistant kills, which is exactly
+# how the 137 on every stop went unnoticed.
+readonly STOP_TIMEOUT_S=10
 
 WORK_DIR="$(mktemp -d)"
 readonly WORK_DIR
@@ -470,6 +475,36 @@ wait_for_healthcheck() {
     return 1
 }
 
+# Stops a player the way the Supervisor stops the add-on, and asserts it got there under its own
+# power. Two things have to hold and they fail differently: the container's exit code says whether
+# it beat the grace period, and the s6 shutdown's own running commentary says whether every
+# service went down or the list stopped part-way through on one that would not answer.
+#
+# Every daemon decision runs this, not just the advertise one. The `s6-pause` decisions bring a
+# different set of processes down, and nothing else in this suite ever stops them.
+assert_clean_stop() {
+    local container=$1
+    local log service
+
+    docker stop --timeout "$STOP_TIMEOUT_S" "$container" >/dev/null ||
+        fail "docker stop exited $? -- s6 did not shut the services down"
+
+    # `docker stop` returns 0 even where it gave up waiting and sent SIGKILL, so its own status
+    # proves nothing. The container's does: a killed one reports 137.
+    assert_exit_code "$container" 0 'the container stops cleanly within the grace period'
+
+    # The container has exited, so its log is complete -- a line that is not there now never
+    # arrives, and there is nothing to wait for.
+    log=$(logs_of "$container")
+    for service in sendspin-cli avahi dbus; do
+        if ! grep -F -e "service ${service} successfully stopped" "$log" >/dev/null; then
+            show_logs "$container"
+            fail "the s6 shutdown never brought ${service} down -- it ended part-way through"
+        fi
+        pass "the ${service} service stopped on request rather than being killed"
+    done
+}
+
 # ==============================================================================
 # The checks
 # ==============================================================================
@@ -545,11 +580,7 @@ check_advertise_mode() {
     }
     pass 'docker reports the container healthy, so the HEALTHCHECK instruction runs'
 
-    docker stop --timeout "$STOP_TIMEOUT_S" "$container" >/dev/null ||
-        fail "docker stop exited $? -- s6 did not shut the services down"
-    # `docker stop` returns 0 even where it gave up waiting and sent SIGKILL, so its own status
-    # proves nothing. The container's does: a killed one reports 137.
-    assert_exit_code "$container" 0 'the container stops cleanly within the grace period'
+    assert_clean_stop "$container"
 }
 
 # An `mdns:` server is the third of the four daemon decisions and the odd one out: a server is
@@ -572,6 +603,8 @@ check_mdns_server_mode() {
     assert_process "$container" avahi-daemon 'the bundled avahi-daemon is running for the lookup'
     refute_log "$container" 'mdns: advertising _sendspin._tcp' \
         'the player advertises nothing when it has a server to reach'
+
+    assert_clean_stop "$container"
 }
 
 # A fixed server suppresses the mDNS advertisement, which makes the bundled daemons dead weight
@@ -604,6 +637,8 @@ check_dial_out_mode() {
         'the player advertises nothing when it has a server to dial'
     refute_process "$container" avahi-daemon 'no avahi-daemon is running'
     refute_process "$container" dbus-daemon 'no dbus-daemon is running'
+
+    assert_clean_stop "$container"
 }
 
 # A server value can carry credentials, and the connection-mode line is the first thing that gets

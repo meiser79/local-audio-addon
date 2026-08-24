@@ -96,6 +96,22 @@ RUN apt-get update \
 # that has to stop the container rather than leave the services to flounder.
 ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 
+# The Supervisor stops an add-on with the grace its `timeout` option asks for and
+# calls a container that overruns it a failure. That option defaults to 10s and
+# config.yaml does not set it, so the shutdown needs a budget it cannot exceed.
+# Raising `timeout` instead would buy silence rather than a clean stop, and the
+# add-on would still be sitting there not shutting down.
+#
+# The three longruns come down in sequence, each bounded by its own
+# `timeout-kill` of 2000ms, and this is what bounds the tail after them: 3 * 2000
+# + 2000 = 8s worst case, measured at 8.2s with all three deliberately wedged.
+#
+# The other two gracetimes s6-overlay documents are deliberately absent. They
+# look relevant and are not: S6_SERVICES_GRACETIME only bounds the v2-style
+# services under /etc/services.d, and S6_KILL_FINISH_MAXTIME only bounds
+# /etc/cont-finish.d scripts. This image ships neither directory.
+ENV S6_KILL_GRACETIME=2000
+
 COPY --from=build /stage/usr/local/bin/sendspin-cli /usr/bin/sendspin-cli
 COPY --from=build /build-info.txt /usr/share/sendspin-cli/BUILD-INFO.txt
 COPY rootfs/ /
