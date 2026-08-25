@@ -88,7 +88,20 @@ parse_manifest() {
     ' "$1"
 }
 
+# A top-level key written twice is the one way this reader and the Supervisor's could disagree
+# about a file both of them parse without complaint: PyYAML keeps the last of a duplicate pair
+# silently, and taking the first here would read `host_pid: false` from a manifest the
+# Supervisor reads `host_pid: true` out of. Rather than match that quietly, refuse the file --
+# a manifest key written twice is a mistake whichever value was meant.
+reject_duplicate_keys() {
+    local dupes
+    dupes="$(printf '%s\n' "$MANIFEST" | awk -F '\t' '$1 == "S" { seen[$2]++ }
+        END { for (k in seen) if (seen[k] > 1) printf "%s ", k }')"
+    [ -z "$dupes" ] || die "set twice in $CONFIG: ${dupes% }"
+}
+
 # The raw value of a top-level key, or the empty string when the manifest does not set it.
+# Duplicates are already refused above, so the first match is the only match.
 manifest_scalar() {
     printf '%s\n' "$MANIFEST" | awk -F '\t' -v k="$1" '$1 == "S" && $2 == k { print $3; exit }'
 }
@@ -154,8 +167,8 @@ has_capability() {
 # ==============================================================================
 
 # Kept in the order and the wording of supervisor/apps/utils.py, so the two can be read side by
-# side when the algorithm moves. `explain` records every term that fired; a failure prints the
-# whole derivation rather than just the number it disagreed with.
+# side when the algorithm moves. DERIVATION records every term that fired, so a failure prints
+# the whole sum rather than just the number it disagreed with.
 DERIVATION=()
 
 term() {
@@ -278,6 +291,7 @@ main() {
     MANIFEST="$(parse_manifest "$CONFIG")"
     readonly MANIFEST
 
+    reject_duplicate_keys
     read_manifest_values
     compute_rating
 

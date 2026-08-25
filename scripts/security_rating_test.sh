@@ -251,6 +251,13 @@ check_it_refuses_to_guess() {
     dir="$(new_scratch)"
     rm "$dir/config.yaml"
     assert_rating "$dir" error 'a missing manifest is rejected'
+
+    # The one shape where a line-oriented reader and PyYAML can disagree about a file neither of
+    # them complains about: PyYAML silently keeps the last of a duplicate pair. Reading the
+    # first here would call this manifest 5 while the Supervisor installed it at 3.
+    dir="$(new_scratch)"
+    printf 'host_pid: false\nhost_pid: true\n' >>"$dir/config.yaml"
+    assert_rating "$dir" error 'a key set twice is rejected rather than resolved'
 }
 
 check_comments_and_quotes() {
