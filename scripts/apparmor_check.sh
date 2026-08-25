@@ -3,11 +3,8 @@
 # Parses local_audio/apparmor.txt the way the Supervisor will, so a profile that cannot load is
 # caught here rather than on somebody's machine.
 #
-# The profile is worth a point of the security rating -- see scripts/security_rating.sh and
-# README.md's `## Security rating` -- but only if it actually loads. A typo in it has no local
-# symptom at all: the image still builds, the smoke suite still passes, and the Supervisor
-# silently installs the app unconfined and one point lower. Nothing else in this repository
-# reads the file.
+# Nothing else in this repository reads the file, and a typo in it has no local symptom at all
+# -- see README.md's `## Security rating` for what that costs.
 #
 # Two things are checked, and they are the two ways the Supervisor's own handling of the file
 # can fail:
@@ -56,7 +53,7 @@ profile_names() {
 # adjust_profile(), which rewrites only the first occurrence on each matching line and leaves
 # the rest of the file -- including the indented child profiles -- exactly as written.
 rewrite_profile_name() {
-    local from=$1 to=$2
+    local from=$1 to=$2 file=$3
     awk -v from="$from" -v to="$to" '
         { sub(/\r$/, "") }
         /^profile [^ ]+/ {
@@ -67,7 +64,7 @@ rewrite_profile_name() {
             }
         }
         { print }
-    ' "$3"
+    ' "$file"
 }
 
 main() {
@@ -105,13 +102,12 @@ main() {
         grep -q "^profile $slug " "$candidate" ||
             die "rewriting '$original' to '$slug' did not take"
 
-        # No --warn=all: most of what it reports is "rules not enforced", which is about the
-        # kernel doing the parsing rather than about the profile, and it fires dozens of times
-        # for the network and signal rules this one is mostly made of. A real warning would be
-        # lost in it, and the set would move with the runner's kernel.
-        # --skip-cache so nothing is read from or written to /etc/apparmor.d/cache: this runs
-        # unprivileged, and a cache the parser cannot write to is a diagnostic that varies with
-        # the machine rather than with the file being checked.
+        # Deliberately not --warn=all: nearly everything it reports is "rules not enforced",
+        # which is about the kernel doing the parsing rather than about the profile, and it
+        # fires dozens of times over the network and signal rules this one is mostly made of --
+        # a real warning would be lost in it. --skip-cache for the same reason, one level down:
+        # this runs unprivileged, and a cache it cannot write is a diagnostic that varies with
+        # the machine rather than with the file.
         if ! apparmor_parser --skip-kernel-load --skip-cache "$candidate" 2>&1 | sed 's/^/    /'; then
             die "apparmor_parser rejected the profile as '$slug'"
         fi
