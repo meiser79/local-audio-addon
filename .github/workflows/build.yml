@@ -77,11 +77,8 @@ jobs:
       - name: Test the pactl parsing
         run: scripts/pactl_parse_test.sh
 
-      # The unit test for the rating check the add-on manifest job runs. Here rather than there
-      # for the same reason as the one above: it reads a scratch copy of the manifest and needs
-      # nothing but bash and awk. A check that can only ever agree with the manifest in front of
-      # it is not a guard, so what is asserted here is that it goes red -- for every key that
-      # moves the score, in both directions.
+      # Here rather than in the add-on job for the same reason as the one above: it reads a
+      # scratch copy of the manifest and needs nothing but bash and awk.
       - name: Test the security-rating check
         run: scripts/security_rating_test.sh
 
@@ -125,22 +122,14 @@ jobs:
         with:
           path: ./local_audio
 
-      # The linter above checks the manifest's schema; this checks its posture. The Supervisor
-      # scores every add-on 1-8 from these same keys and prints the number on the store card,
-      # and a key that costs a point has no other symptom -- the add-on installs, runs and lints
-      # exactly as before. README.md's `## Security rating` carries the arithmetic and why 5 is
-      # the ceiling for this add-on; this is what keeps the two from drifting apart.
+      # The linter above checks the manifest's schema; this checks its posture. A key that
+      # costs a point of the Supervisor's 1-8 rating has no other symptom -- the add-on
+      # installs, runs and lints exactly as before, and the number only shows on the store card.
       - name: Check the add-on's security rating
         run: scripts/security_rating.sh
 
-      # The AppArmor profile is worth a point of that rating, but only if it loads. A typo in it
-      # is invisible everywhere else: the image still builds and the smoke suite still passes,
-      # while the Supervisor installs the add-on unconfined and one point lower.
-      #
-      # apparmor_parser ships in the apparmor package, which is on the runner image today -- so
-      # this is normally a no-op. It is here because the check below refuses to skip when the
-      # binary is missing, and a lint job going red over an absent package is not what it is
-      # for.
+      # A no-op on the runner image as it stands. It is here because the check below refuses to
+      # skip when the binary is missing, and going red over an absent package is not the point.
       - name: Make sure apparmor_parser is installed
         run: |
           if ! command -v apparmor_parser >/dev/null; then
@@ -148,8 +137,9 @@ jobs:
             sudo apt-get install --yes --no-install-recommends apparmor
           fi
 
-      # `--skip-kernel-load`, so this compiles the profile and never hands it to the kernel:
-      # unprivileged, and it changes nothing about the runner.
+      # The profile is worth a point of that rating, but only if it loads, and a typo in it is
+      # invisible everywhere else. Compiled and never handed to the kernel, so this needs no
+      # privilege and changes nothing about the runner.
       - name: Parse the AppArmor profile
         run: scripts/apparmor_check.sh
 

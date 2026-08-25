@@ -1,22 +1,14 @@
 #!/usr/bin/env bash
 #
-# Recomputes the Supervisor's security rating for the app manifest and fails unless it is still
-# 5.
+# Recomputes the Supervisor's security rating for the add-on manifest and fails unless it is
+# still 5 -- on a rise as well as a drop.
 #
-# The number the store card shows is `rating_security()` in supervisor/apps/utils.py, computed
-# from the manifest at install time. Nothing in this repository would otherwise notice a key
-# growing in config.yaml that costs a point -- the manifest linter checks the schema, not the
-# posture, and the card is the only place the score is ever displayed. README.md's `## Security
-# rating` section carries the arithmetic and why 5 is the ceiling; this asserts it.
+# The score is `rating_security()` in supervisor/apps/utils.py, arithmetic over the manifest at
+# install time. For this one it is 5, +1 for the AppArmor profile, -1 for host_network. Nothing
+# else here would notice a key that costs a point: the manifest linter checks the schema rather
+# than the posture, and the number only ever surfaces on the store card.
 #
-# It fails in both directions on purpose. A drop is a regression; a rise means the write-up went
-# stale, and a rating nobody documented is the same blind spot in the other direction.
-#
-# The parser is deliberately strict: a rating-relevant key whose value it cannot read is an
-# error, never a default. Guessing `false` for something it did not understand would turn a
-# manifest that costs points into a green check.
-#
-# Needs: bash and awk. No docker, no image, no Supervisor.
+# Needs: bash and awk.
 #
 # Usage: scripts/security_rating.sh [APP_DIR]        (default: local_audio/)
 
@@ -27,9 +19,8 @@ readonly SCRIPT_DIR
 
 readonly EXPECTED_RATING=5
 
-# The capabilities that cost a point. Not every capability the Supervisor accepts is here --
-# IPC_LOCK, SYS_NICE, SYS_RESOURCE and SYS_TIME are free -- so this is a copy of the tuple in
-# rating_security(), not of the Capabilities enum.
+# The tuple in rating_security(), not the Capabilities enum: IPC_LOCK, SYS_NICE, SYS_RESOURCE
+# and SYS_TIME cost nothing.
 readonly DANGEROUS_CAPABILITIES='BPF CHECKPOINT_RESTORE DAC_READ_SEARCH NET_ADMIN NET_RAW
     PERFMON SYS_ADMIN SYS_MODULE SYS_PTRACE SYS_RAWIO'
 
@@ -42,57 +33,36 @@ die() {
     exit 1
 }
 
-# ==============================================================================
-# Reading the manifest
-# ==============================================================================
-
-# A top-level-only reader for the subset of YAML an app manifest is written in. Emits one
-# `S<TAB>key<TAB>value` line per top-level scalar and one `L<TAB>key<TAB>item` line per item of a
-# top-level block or flow sequence.
-#
-# Indentation is the whole of how nesting is handled: anything indented belongs to the last
-# column-0 key, so `options:`'s own `name:` never reaches the caller as a top-level `name`. That
-# also covers the folded `description: >-` block, whose prose lines are children of a key
-# nothing here reads.
+# Emits `S<TAB>key<TAB>value` per top-level scalar and `L<TAB>key<TAB>item` per top-level
+# sequence item. Indentation is the whole of how nesting is handled, so `options:`'s own keys
+# never reach the caller as top-level ones.
 parse_manifest() {
     awk '
         { sub(/\r$/, "") }
-
-        # Comment or blank at any depth: not a key, and not the end of the block it sits in.
         /^[[:space:]]*(#|$)/ { next }
 
         /^[A-Za-z_][A-Za-z0-9_]*:/ {
             key = substr($0, 1, index($0, ":") - 1)
-            value = substr($0, index($0, ":") + 1)
-            print "S\t" key "\t" strip(value)
+            print "S\t" key "\t" strip(substr($0, index($0, ":") + 1))
             next
         }
 
-        # Indented, so a child of the key above. Only sequence items are passed on; a nested
-        # mapping (`schema:`, `options:`) has no rating-relevant shape.
         /^[[:space:]]+-[[:space:]]*/ {
             sub(/^[[:space:]]+-[[:space:]]*/, "")
             print "L\t" key "\t" strip($0)
         }
 
         function strip(s) {
-            # An inline comment needs whitespace before the # to be one, which is what keeps a
-            # value that legitimately contains a hash intact.
             sub(/[[:space:]]+#.*$/, "", s)
             gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
-            # Quotes are stripped as a pair only, so a value with one stray quote stays odd
-            # enough for the callers below to reject.
             if (s ~ /^".*"$/ || s ~ /^'"'"'.*'"'"'$/) s = substr(s, 2, length(s) - 2)
             return s
         }
     ' "$1"
 }
 
-# A top-level key written twice is the one way this reader and the Supervisor's could disagree
-# about a file both of them parse without complaint: PyYAML keeps the last of a duplicate pair
-# silently, and taking the first here would read `host_pid: false` from a manifest the
-# Supervisor reads `host_pid: true` out of. Rather than match that quietly, refuse the file --
-# a manifest key written twice is a mistake whichever value was meant.
+# PyYAML silently keeps the last of a duplicate pair, so reading the first here would score a
+# manifest the Supervisor scores differently. Neither value is safe to assume was meant.
 reject_duplicate_keys() {
     local dupes
     dupes="$(printf '%s\n' "$MANIFEST" | awk -F '\t' '$1 == "S" { seen[$2]++ }
@@ -100,8 +70,6 @@ reject_duplicate_keys() {
     [ -z "$dupes" ] || die "set twice in $CONFIG: ${dupes% }"
 }
 
-# The raw value of a top-level key, or the empty string when the manifest does not set it.
-# Duplicates are already refused above, so the first match is the only match.
 manifest_scalar() {
     printf '%s\n' "$MANIFEST" | awk -F '\t' -v k="$1" '$1 == "S" && $2 == k { print $3; exit }'
 }
@@ -111,12 +79,8 @@ manifest_has_key() {
         END { exit !found }'
 }
 
-# ==============================================================================
-# Typing the values the rating reads
-# ==============================================================================
-
-# voluptuous' Boolean, which is what the Supervisor validates these keys with, takes the YAML
-# 1.1 spellings as well as true/false. Anything else is rejected rather than defaulted.
+# voluptuous' Boolean, which validates these keys, takes the YAML 1.1 spellings too. Anything
+# else is rejected rather than defaulted: guessing `false` is how a costly key would pass.
 manifest_bool() {
     local key=$1 default=$2 raw
 
@@ -133,8 +97,20 @@ manifest_bool() {
     esac
 }
 
-# `privileged` is a list of Capabilities, in either YAML sequence form. Emits one capability per
-# line, upper-cased the way the enum spells them.
+manifest_role() {
+    local raw
+    manifest_has_key hassio_role || {
+        printf 'default\n'
+        return
+    }
+    raw="$(manifest_scalar hassio_role)"
+    case ${raw,,} in
+        default | homeassistant | backup | manager | admin) printf '%s\n' "${raw,,}" ;;
+        *) die "hassio_role is '$raw', which is not one of the Supervisor's roles" ;;
+    esac
+}
+
+# One capability per line, in either YAML sequence form.
 manifest_privileged() {
     local raw items
 
@@ -142,7 +118,6 @@ manifest_privileged() {
 
     raw="$(manifest_scalar privileged)"
     if [ -n "$raw" ]; then
-        # Flow sequence on the key's own line.
         case $raw in
             \[*\]) ;;
             *) die "privileged is '$raw', which is neither a block nor a flow sequence" ;;
@@ -162,13 +137,6 @@ has_capability() {
     printf '%s\n' "$PRIVILEGED" | grep -qx -- "$1"
 }
 
-# ==============================================================================
-# rating_security(), as the Supervisor computes it
-# ==============================================================================
-
-# Kept in the order and the wording of supervisor/apps/utils.py, so the two can be read side by
-# side when the algorithm moves. DERIVATION records every term that fired, so a failure prints
-# the whole sum rather than just the number it disagreed with.
 DERIVATION=()
 
 term() {
@@ -177,11 +145,9 @@ term() {
     DERIVATION+=("$(printf '%+d  %s' "$delta" "$why")")
 }
 
-# Every value the rating reads, resolved in one pass up here rather than lazily inside the
-# arithmetic below. A `die` in a command substitution only kills the subshell, so a value read
-# from inside an `if [ "$(...)" ]` would come back empty and be scored as absent -- the exact
-# guess the parser is written not to make. These are plain assignments, so `set -e` carries the
-# refusal out.
+# Resolved up here rather than lazily inside the arithmetic: a `die` in a command substitution
+# only kills the subshell, so a value read from inside `if [ "$(...)" ]` would come back empty
+# and be scored as absent. These are plain assignments, so `set -e` carries the refusal out.
 read_manifest_values() {
     APPARMOR_ENABLED="$(manifest_bool apparmor true)"
     INGRESS="$(manifest_bool ingress false)"
@@ -196,32 +162,28 @@ read_manifest_values() {
     PRIVILEGED="$(manifest_privileged)"
 }
 
+# In the order rating_security() computes it, so the two can be read side by side.
 compute_rating() {
     RATING=5
 
-    # AppArmor. `apparmor: false` disables it outright; otherwise the profile counts only once
-    # the Supervisor has one installed for the slug, which is what shipping apparmor.txt beside
-    # the manifest gets you -- install_apparmor() runs before the image pull, so a prebuilt
-    # image earns it the same as a built one.
+    # The profile has to be installable, not merely enabled: install_apparmor() ships
+    # apparmor.txt before the image is pulled, so a prebuilt image earns the point too.
     if [ "$APPARMOR_ENABLED" = false ]; then
         term -1 'apparmor: false'
     elif [ -f "$APP_DIR/apparmor.txt" ]; then
         term +1 'apparmor.txt ships a profile'
     fi
 
-    # Home Assistant login & ingress -- one or the other, never both.
     if [ "$INGRESS" = true ]; then
         term +2 'ingress: true'
     elif [ "$AUTH_API" = true ]; then
         term +1 'auth_api: true'
     fi
 
-    # Signed. AppModel.signed is a hardcoded False -- "Currently no signing support" -- so this
-    # term cannot fire for any app, and is here only to be visibly zero.
+    # No `signed` term: AppModel.signed is a hardcoded False, so it cannot fire for any add-on.
 
-    # Privileged options. One branch, so a manifest that grants four dangerous capabilities and
-    # mounts kernel modules still loses the single point -- which is why the reason is reported
-    # as a list rather than as whichever term happened to fire first.
+    # One branch, so four dangerous capabilities and kernel modules together still cost the
+    # single point.
     local reasons=()
     local cap
     for cap in $DANGEROUS_CAPABILITIES; do
@@ -239,7 +201,6 @@ compute_rating() {
         )"
     fi
 
-    # Supervisor API role.
     case "$HASSIO_ROLE" in
         manager) term -1 'hassio_role: manager' ;;
         admin) term -2 'hassio_role: admin' ;;
@@ -252,38 +213,21 @@ compute_rating() {
         term -2 'host_pid: true'
     fi
 
-    # The UTS namespace is free on its own: renaming the host through it needs CAP_SYS_ADMIN,
-    # so the pair is what costs a point.
+    # The pair is the term: the UTS namespace only lets a container rename the host if it also
+    # holds CAP_SYS_ADMIN.
     if [ "$HOST_UTS" = true ] && has_capability SYS_ADMIN; then
         term -1 'host_uts: true alongside SYS_ADMIN'
     fi
 
-    # Docker API access and full hardware access are not a term but a verdict: either one pins
-    # the rating at the floor whatever else the manifest says.
+    # Not a term but a verdict: either one pins the rating at the floor.
     if [ "$DOCKER_API" = true ] || [ "$FULL_ACCESS" = true ]; then
         RATING=1
         DERIVATION+=('=1  docker_api or full_access overrides every term above')
     fi
 
-    # Clamped into 1-8 last, exactly as the Supervisor does.
     if [ "$RATING" -gt 8 ]; then RATING=8; fi
     if [ "$RATING" -lt 1 ]; then RATING=1; fi
 }
-
-manifest_role() {
-    local raw
-    manifest_has_key hassio_role || {
-        printf 'default\n'
-        return
-    }
-    raw="$(manifest_scalar hassio_role)"
-    case ${raw,,} in
-        default | homeassistant | backup | manager | admin) printf '%s\n' "${raw,,}" ;;
-        *) die "hassio_role is '$raw', which is not one of the Supervisor's roles" ;;
-    esac
-}
-
-# ==============================================================================
 
 main() {
     [ -f "$CONFIG" ] || die "no manifest at $CONFIG"
@@ -304,10 +248,10 @@ main() {
     printf '  rating              %d\n' "$RATING"
 
     if [ "$RATING" -ne "$EXPECTED_RATING" ]; then
-        die "the manifest now rates $RATING, not $EXPECTED_RATING -- if that is deliberate, update README.md's '## Security rating' section and EXPECTED_RATING in this script together"
+        die "the manifest now rates $RATING, not $EXPECTED_RATING -- if that is deliberate, move EXPECTED_RATING in this script with it"
     fi
 
-    printf '\nsecurity rating: %d, as documented\n' "$RATING"
+    printf '\nsecurity rating: %d\n' "$RATING"
 }
 
 main

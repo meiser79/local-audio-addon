@@ -1,29 +1,15 @@
 #!/usr/bin/env bash
 #
-# Parses local_audio/apparmor.txt the way the Supervisor will, so a profile that cannot load is
-# caught here rather than on somebody's machine.
+# Parses local_audio/apparmor.txt the way the Supervisor will.
 #
-# Nothing else in this repository reads the file, and a typo in it has no local symptom at all
-# -- see README.md's `## Security rating` for what that costs.
+# Nothing else in this repository reads the file, and a typo in it has no local symptom: the
+# image still builds and the smoke suite still passes, while the add-on installs unconfined and
+# a point lower. Two things are checked, matching the two ways the Supervisor's own handling can
+# fail -- get_profile_name() wants exactly one top-level profile, and adjust_profile() renames
+# it to the installed slug before loading, so the file is never parsed under the name it is
+# written with.
 #
-# Two things are checked, and they are the two ways the Supervisor's own handling of the file
-# can fail:
-#
-#   1. It carries exactly one top-level profile name. supervisor/utils/apparmor.py's
-#      get_profile_name() raises on none and on more than one, and its regex is anchored at
-#      column zero -- so the indented child profiles inside are correctly not counted, and a
-#      second profile accidentally left unindented would be.
-#
-#   2. With that name rewritten to an installed slug, apparmor_parser accepts it. The rewrite
-#      is what adjust_profile() does at install time, and it matters here because the slug is
-#      install-dependent: `local_` prefixed for a local app, repository-hash prefixed for a
-#      store one. The file is parsed under both, since a profile is never loaded under the name
-#      it is written with.
-#
-# `-Q` is --skip-kernel-load: the profile is compiled and rejected on a syntax error, but never
-# handed to the kernel, so this needs no privilege and changes nothing about the host.
-#
-# Needs: bash, awk and apparmor_parser. No docker, no image, no Supervisor.
+# Needs: bash, awk and apparmor_parser.
 #
 # Usage: scripts/apparmor_check.sh [PROFILE]        (default: local_audio/apparmor.txt)
 
@@ -35,8 +21,8 @@ readonly SCRIPT_DIR
 PROFILE="${1:-$SCRIPT_DIR/../local_audio/apparmor.txt}"
 readonly PROFILE
 
-# The two shapes an installed slug takes. Different lengths on purpose: a rewrite that assumed
-# the name kept its width would pass one and fail the other.
+# Both slug shapes, and deliberately different lengths: `local_` prefixed for a local add-on,
+# repository-hash prefixed for a store one.
 readonly SLUGS='local_local_audio a0d7b954_local_audio'
 
 die() {
@@ -44,14 +30,12 @@ die() {
     exit 1
 }
 
-# get_profile_name(), as supervisor/utils/apparmor.py reads it: every line whose first column is
-# `profile `, and the file is only valid when they all name the same one.
+# Anchored at column zero, as get_profile_name() is, so the indented child profiles inside are
+# correctly not counted.
 profile_names() {
     awk '{ sub(/\r$/, "") } /^profile [^ ]+/ { print $2 }' "$1" | sort -u
 }
 
-# adjust_profile(), which rewrites only the first occurrence on each matching line and leaves
-# the rest of the file -- including the indented child profiles -- exactly as written.
 rewrite_profile_name() {
     local from=$1 to=$2 file=$3
     awk -v from="$from" -v to="$to" '
@@ -97,17 +81,12 @@ main() {
         candidate="$workdir/$slug"
         rewrite_profile_name "$original" "$slug" "$PROFILE" >"$candidate"
 
-        # The rewrite has to have taken, or the parse below would be checking the file as
-        # written -- which is the one name it is never loaded under.
         grep -q "^profile $slug " "$candidate" ||
             die "rewriting '$original' to '$slug' did not take"
 
-        # Deliberately not --warn=all: nearly everything it reports is "rules not enforced",
-        # which is about the kernel doing the parsing rather than about the profile, and it
-        # fires dozens of times over the network and signal rules this one is mostly made of --
-        # a real warning would be lost in it. --skip-cache for the same reason, one level down:
-        # this runs unprivileged, and a cache it cannot write is a diagnostic that varies with
-        # the machine rather than with the file.
+        # Not --warn=all: nearly all of it is "rules not enforced", which tracks the kernel
+        # doing the parsing rather than the file, and would bury a real warning. --skip-cache
+        # because this runs unprivileged and cannot write /etc/apparmor.d/cache.
         if ! apparmor_parser --skip-kernel-load --skip-cache "$candidate" 2>&1 | sed 's/^/    /'; then
             die "apparmor_parser rejected the profile as '$slug'"
         fi
