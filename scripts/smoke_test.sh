@@ -609,10 +609,10 @@ check_default_name() {
     start_player 'output=null' "log_level=$PLAYER_LOG_LEVEL"
     container=$PLAYER
 
-    assert_config_line "$container" '^name = Local Audio$' \
-        'a player nobody named is called Local Audio'
     assert_log "$container" 'Advertising "Local Audio" over mDNS' \
-        'and that is the name it advertises'
+        'a player nobody named advertises itself as Local Audio'
+    assert_config_line "$container" '^name = Local Audio$' \
+        'and that is the name the rendered config carries'
 }
 
 # An `mdns:` server is the third of the four daemon decisions and the odd one out: a server is
