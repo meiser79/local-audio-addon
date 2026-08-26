@@ -167,18 +167,33 @@ cannot come to mean something the version tag does not. A release that fails
 halfway therefore leaves nothing installable behind — only unreferenced
 digests, which no tag names and nothing will pull.
 
-Once that workflow succeeds, `.github/workflows/sync-store.yml` mirrors
-`local_audio/` from the released commit into the store repository and opens a
-pull request there; that is the second half of the flow, and **Store card sync**
-below covers it. A person merges that pull request, so between the release
-finishing and the merge ghcr carries a version the store does not yet offer.
+Last, and only once the manifest is published, the workflow writes the GitHub
+Release. Its body is assembled from `local_audio/CHANGELOG.md` by
+`scripts/release_notes.sh`: a line naming the image and the two tags it went out
+under, then every `## X.Y.Z` section after the previous release's version
+through this one. That range is what accounts for a skipped version — not every
+bump is tagged, and 0.1.3 and 0.1.4 were bumped and then delivered by `v0.1.5` —
+so the accounting is mechanical rather than a convention someone has to
+remember, and a tag whose version has no changelog section fails the job instead
+of publishing an empty body. A release wanting more than the sections say is
+still edited by hand afterwards.
 
-Nothing in CI creates the GitHub Release object. It is written by hand, and it
-is where a skipped version is accounted for: not every bump is tagged — 0.1.3
-and 0.1.4 were bumped and then delivered by `v0.1.5` — so by convention the
-body names the image that was published, says which versions it folds in and
-why the store card's version jumps by more than one, and quotes the changelog
-sections it is delivering.
+Attached to it is a `docker-compose.yml` pinned to the released image, which
+`scripts/compose_pinned.sh` generates from the one in this repository by
+replacing `build: .` with the image that was published. It is generated rather
+than kept as a second copy so the two cannot drift, and it is never committed.
+
+This lands after `v0.1.8`, so `v0.1.6`, `v0.1.7` and `v0.1.8` have tags and
+published images but no Release object; backfilling them is a manual job.
+
+Once the whole workflow succeeds — the Release included —
+`.github/workflows/sync-store.yml` mirrors `local_audio/` from the released
+commit into the store repository and opens a pull request there; that is the
+second half of the flow, and **Store card sync** below covers it. A person
+merges that pull request, so between the release finishing and the merge ghcr
+carries a version the store does not yet offer. A release job that failed after
+the image published therefore holds the store bump back too, and re-running the
+workflow is what releases it.
 
 ## Store card sync
 
