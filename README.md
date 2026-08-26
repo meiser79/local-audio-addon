@@ -134,6 +134,52 @@ and the routing are shared with every other app and belong to the Audio panel.
 The check is app-only: under Compose there is no PulseAudio to ask, and it does
 nothing.
 
+## Cutting a release
+
+The version is bumped by the pull request that makes the change, not at release
+time: `local_audio/config.yaml` carries it and `local_audio/CHANGELOG.md` gains
+its section as part of the work itself. Cutting a release is confirming that
+those two say what is about to be published, and then tagging it.
+
+A lightweight `vMAJOR.MINOR.PATCH` tag on a commit on `main` is the only thing
+that publishes. `.github/workflows/release.yml` triggers on that and on nothing
+else — no branch push, no pull request, no `workflow_dispatch` — so pushing the
+tag is the decision, and there is no route to a published image that does not
+go through it.
+
+```sh
+git tag v0.1.7 <the commit on main> && git push origin v0.1.7
+```
+
+The run opens with a preflight, ahead of the matrix so that a mistyped tag
+fails in a minute rather than after two half-hour builds. It refuses a tag that
+disagrees with the manifest's `version:` — the store card pulls `image:version`,
+so a manifest naming a tag nobody pushed is an app that cannot install — and it
+refuses anything that is not `vMAJOR.MINOR.PATCH`, which is how `v0.1.7rc1` is
+turned away rather than published as `latest` with nobody having decided that
+it should be.
+
+Then one leg per architecture builds and pushes its image **by digest**, under
+no tag at all, and pulls that digest back to smoke-test the bits that were
+pushed rather than the ones that were built. Only with both legs green does the
+manifest job tag `:VERSION` and `:latest`, both from one index so that `latest`
+cannot come to mean something the version tag does not. A release that fails
+halfway therefore leaves nothing installable behind — only unreferenced
+digests, which no tag names and nothing will pull.
+
+Once that workflow succeeds, `.github/workflows/sync-store.yml` mirrors
+`local_audio/` from the released commit into the store repository and opens a
+pull request there; that is the second half of the flow, and **Store card sync**
+below covers it. A person merges that pull request, so between the release
+finishing and the merge ghcr carries a version the store does not yet offer.
+
+Nothing in CI creates the GitHub Release object. It is written by hand, and it
+is where a skipped version is accounted for: not every bump is tagged — 0.1.3
+and 0.1.4 were bumped and then delivered by `v0.1.5` — so by convention the
+body names the image that was published, says which versions it folds in and
+why the store card's version jumps by more than one, and quotes the changelog
+sections it is delivering.
+
 ## Store card sync
 
 The card the store offers this app from lives in
