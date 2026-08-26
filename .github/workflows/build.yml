@@ -207,11 +207,24 @@ jobs:
             exit 1
           }
 
+      # The suite's one confined check loads local_audio/apparmor.txt into this runner's kernel
+      # and runs a container under it, which is the only place anything here is ever enforced. A
+      # no-op on the runner image as it stands, as in the add-on job above.
+      - name: Make sure apparmor_parser is installed
+        run: |
+          if ! command -v apparmor_parser >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --yes --no-install-recommends apparmor
+          fi
+
       # Twice, because the two option sources share no code above `sendspin::read_options`.
       # Standalone is what a Compose user gets; add-on is the bashio branch, which nothing else
       # exercises. The script's own header says what each mode covers.
+      #
+      # `--require-apparmor` because these runners can confine: the confined check is a skip on a
+      # developer's machine and a failure anywhere that could have run it.
       - name: Smoke test, standalone mode
-        run: scripts/smoke_test.sh "$IMAGE" --mode standalone
+        run: scripts/smoke_test.sh "$IMAGE" --mode standalone --require-apparmor
 
       - name: Smoke test, add-on mode
-        run: scripts/smoke_test.sh "$IMAGE" --mode addon
+        run: scripts/smoke_test.sh "$IMAGE" --mode addon --require-apparmor

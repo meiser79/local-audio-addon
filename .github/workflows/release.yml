@@ -176,17 +176,28 @@ jobs:
             exit 1
           }
 
+      # The confined check loads local_audio/apparmor.txt into this runner's kernel. A no-op on
+      # the runner image as it stands, and here for the reason it is in build.yml.
+      - name: Make sure apparmor_parser is installed
+        run: |
+          if ! command -v apparmor_parser >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --yes --no-install-recommends apparmor
+          fi
+
       # The same suite build.yml runs on a push, run against the pushed digest. A release is
-      # gated on exactly what a push is gated on, both option sources included.
+      # gated on exactly what a push is gated on, both option sources included -- and
+      # `--require-apparmor` is part of "exactly", since this is the run that decides what a user
+      # installs.
       - name: Smoke test, standalone mode
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
-        run: scripts/smoke_test.sh "$REPO@$DIGEST" --mode standalone
+        run: scripts/smoke_test.sh "$REPO@$DIGEST" --mode standalone --require-apparmor
 
       - name: Smoke test, add-on mode
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
-        run: scripts/smoke_test.sh "$REPO@$DIGEST" --mode addon
+        run: scripts/smoke_test.sh "$REPO@$DIGEST" --mode addon --require-apparmor
 
       # A matrix leg cannot hand a per-leg value to a later job through `outputs`, so the digest
       # travels as a file named after the architecture that produced it. The manifest job asserts
