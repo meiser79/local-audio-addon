@@ -124,10 +124,14 @@ profile local_audio flags=(attach_disconnected,mediate_deleted) {
     @{PROC}/sys/net/ipv{4,6}/** r,
 
     # 5353 on both families, plus the netlink socket it watches interface and
-    # address changes on.
+    # address changes on. `dgram` is the type avahi actually opens that one
+    # with -- socket(PF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE) -- and a kernel
+    # that mediates netlink by type denies the bind under any other, which
+    # fails the daemon's interface enumeration and leaves it restarting for as
+    # long as the app runs.
     network inet dgram,
     network inet6 dgram,
-    network netlink raw,
+    network netlink dgram,
     network unix stream,
     network unix dgram,
   }
