@@ -599,6 +599,22 @@ check_advertise_mode() {
     assert_clean_stop "$container"
 }
 
+# The name a user who never opened the configuration screen ends up with. It is a fixed string
+# now rather than the host's name, so nothing outside the image decides it -- which is what makes
+# it worth asserting in both modes: add-on mode reaches the same default through an empty `name`
+# option rather than through an unset variable.
+check_default_name() {
+    local container
+    step 'the default player name'
+    start_player 'output=null' "log_level=$PLAYER_LOG_LEVEL"
+    container=$PLAYER
+
+    assert_config_line "$container" '^name = Local Audio$' \
+        'a player nobody named is called Local Audio'
+    assert_log "$container" 'Advertising "Local Audio" over mDNS' \
+        'and that is the name it advertises'
+}
+
 # An `mdns:` server is the third of the four daemon decisions and the odd one out: a server is
 # configured, so the player does not advertise, and yet the daemons are needed anyway because
 # mDNS is how that server's name gets resolved. Leaving them down here would give a player that
@@ -739,7 +755,7 @@ check_supervisor_was_asked() {
     assert_log "$container" 'listening on port 8928' 'the player came up on its port'
     assert_supervisor_requests 'the stand-in Supervisor was asked, and only for its one route'
     assert_config_line "$container" "^name = ${PLAYER_NAME}\$" \
-        'the name in the config came from the API rather than the hostname default'
+        'the name in the config came from the API rather than the default'
     assert_config_line "$container" '^output = null$' \
         'an output of null survived the fetch as a value rather than becoming a default'
 }
@@ -788,6 +804,7 @@ main() {
     printf 'smoke: testing %s in %s mode\n' "$IMAGE" "$MODE"
 
     check_advertise_mode
+    check_default_name
     check_mdns_server_mode
     check_dial_out_mode
     check_credentials_are_kept_out_of_the_mode_line

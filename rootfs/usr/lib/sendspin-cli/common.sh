@@ -43,10 +43,9 @@ sendspin::read_options() {
         SENDSPIN_SERVER=$(sendspin::option "${config}" 'server')
     fi
 
-    # Under host_network the container's hostname is the Home Assistant host's,
-    # which is the name a user expects to see. Reading it directly avoids the
-    # hassio_api grant that bashio::info would need for the same answer.
-    : "${SENDSPIN_NAME:=$(hostname)}"
+    # A fixed name rather than the host's: `homeassistant` said nothing about
+    # what the player is, and reading it cost the host's UTS namespace.
+    : "${SENDSPIN_NAME:=Local Audio}"
     : "${SENDSPIN_OUTPUT:=default}"
     : "${SENDSPIN_LOG_LEVEL:=info}"
     SENDSPIN_SERVER="${SENDSPIN_SERVER:-}"

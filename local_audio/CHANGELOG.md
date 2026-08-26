@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.7
+
+- The player is called **Local Audio** by default, rather than taking the name
+  of the machine it runs on. If you never set a name, this player is about to
+  be renamed from **homeassistant** to **Local Audio** in Music Assistant —
+  type the old name into **Player name** to keep it.
+- The app no longer asks for the host's UTS namespace. It was only ever there
+  so the name above could be read off the host, and nothing needs it now.
+
 ## 0.1.6
 
 - The log now names the audio output this app plays through at every start —

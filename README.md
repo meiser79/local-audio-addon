@@ -35,7 +35,7 @@ Configuration is four environment variables, all optional:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SENDSPIN_NAME` | the container's hostname | Name shown in Music Assistant |
+| `SENDSPIN_NAME` | `Local Audio` | Name shown in Music Assistant |
 | `SENDSPIN_OUTPUT` | `default` | ALSA output, see below |
 | `SENDSPIN_LOG_LEVEL` | `info` | `none`, `error`, `warn`, `info`, `debug`, `verbose` |
 | `SENDSPIN_SERVER` | unset | Dial out to one server instead of being discovered |

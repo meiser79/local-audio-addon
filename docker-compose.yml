@@ -17,8 +17,8 @@ services:
       # bus client needs.
       # - /var/run/dbus:/var/run/dbus:ro
     environment:
-      # Name shown in Music Assistant. Left unset it is the container's
-      # hostname, which is already unique on the network.
+      # Name shown in Music Assistant. Left unset every container is called
+      # `Local Audio`, so name them when running more than one on a network.
       # SENDSPIN_NAME: Living Room
       # `default` follows /etc/asound.conf, a bare name is an ALSA PCM such as
       # `hw:1,0`, and `null` discards the audio.

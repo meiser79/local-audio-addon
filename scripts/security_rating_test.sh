@@ -104,15 +104,15 @@ check_the_costly_keys() {
     printf 'host_pid: true\n' >>"$dir/config.yaml"
     assert_rating "$dir" 3 'host_pid: true costs two'
 
-    # host_uts is already set, so SYS_ADMIN costs twice: once as a capability, once for the
-    # pair. Without it, only the capability point -- which is what proves the pair is read as a
-    # pair rather than as either half.
+    # The manifest sets neither half of the pair, so both are added here. With host_uts
+    # SYS_ADMIN costs twice, once as a capability and once for the pair; without it only the
+    # capability point -- which is what proves the pair is read as a pair rather than as either
+    # half.
     dir="$(new_scratch)"
-    printf 'privileged:\n  - SYS_ADMIN\n' >>"$dir/config.yaml"
-    assert_rating "$dir" 3 'SYS_ADMIN alongside the existing host_uts costs two'
+    printf 'host_uts: true\nprivileged:\n  - SYS_ADMIN\n' >>"$dir/config.yaml"
+    assert_rating "$dir" 3 'SYS_ADMIN alongside host_uts costs two'
 
     dir="$(new_scratch)"
-    sed -i 's/^host_uts: true$/host_uts: false/' "$dir/config.yaml"
     printf 'privileged:\n  - SYS_ADMIN\n' >>"$dir/config.yaml"
     assert_rating "$dir" 4 'SYS_ADMIN without host_uts costs one'
 
@@ -180,7 +180,7 @@ check_the_free_keys() {
 
     dir="$(new_scratch)"
     printf 'privileged: [SYS_NICE, SYS_ADMIN]\n' >>"$dir/config.yaml"
-    assert_rating "$dir" 3 'a flow sequence is read the same as a block one'
+    assert_rating "$dir" 4 'a flow sequence is read the same as a block one'
 
     dir="$(new_scratch)"
     printf 'host_ipc: true\nvideo: true\n' >>"$dir/config.yaml"
