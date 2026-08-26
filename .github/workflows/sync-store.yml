@@ -10,6 +10,13 @@ name: Sync store card
 # would make a store outage able to fail a release that had already published. This runs after,
 # separately, and only for a release that finished.
 #
+# That separation carries a coupling of its own, running the other way, and it is worth knowing
+# before reading the `if:` below. `conclusion` is the whole of release.yml's, not the publish's,
+# and release.yml ends with a job that writes the GitHub Release. That job failing after the
+# image published leaves ghcr serving a version this sync has not carried across -- exactly the
+# window above, held open until somebody re-runs that workflow. Re-running it is safe: both it
+# and the steps below are written to come out green on a release that is already there.
+#
 # Two things that trigger costs. `workflows:` matches release.yml by its `name:` rather than by
 # its path, so renaming that workflow stops this one firing -- silently, because a trigger that
 # never matches raises nothing. And `workflow_run` only ever runs the copy of this file on the

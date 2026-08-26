@@ -287,3 +287,159 @@ jobs:
             exit 1
           }
           echo "published $REPO:$VERSION and $REPO:latest"
+
+  # The Release object, and the one thing here a person rather than the Supervisor reads. Last
+  # and gated on `manifest`, so a Release is only ever written for a tag whose image is complete:
+  # `manifest` is the job that proves both architectures are in one index, and until it has run
+  # there is nothing installable for a Release to announce.
+  #
+  # A consequence worth naming, because it is not visible from here: sync-store.yml fires on this
+  # workflow *concluding successfully*, so a failure in this job withholds the store card bump
+  # for an image that published perfectly. Re-running the workflow is the recovery, and the
+  # existing-release check the job opens with is what makes that re-run land green rather than
+  # dying on a Release that is already there.
+  release:
+    name: release
+    needs: [preflight, manifest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The only permission this job holds, and the only one it needs. Unlike the jobs above there
+    # is nothing to restate alongside it: `write` on a scope carries `read` on that scope, the
+    # checkout below reads this repository through it, and nothing here touches ghcr.
+    permissions:
+      contents: write
+    env:
+      REPO: ghcr.io/${{ github.repository }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      # Whole history, for the tag lookup below rather than for anything that gets built: the
+      # previous release has to be found among this tag's ancestors, and the single-commit
+      # checkout the other jobs take carries neither the history nor the other tags to find it
+      # among.
+      #
+      # `persist-credentials: false` because everything below runs out of this checkout while the
+      # job holds `contents: write`, and nothing here needs a git credential: the tag lookup is
+      # local and `gh` is handed its token explicitly, in the two steps that call it.
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # First, so that a tag which already has one costs nothing further and every step after
+      # this is skipped rather than run and discarded. A tag is immutable, so a re-run would
+      # assemble the same notes out of the same changelog and pin the same compose file to the
+      # same image -- there is nothing a second create could add, and it would fail rather than
+      # do nothing. Exiting green instead is what lets a re-run be the recovery for a failure
+      # further up, and it keeps a replayed old tag from overwriting a Release somebody wrote by
+      # hand.
+      #
+      # A `gh` failure that is not a 404 lands here as "no release", and the create below then
+      # fails on the release that does exist. Wrong twice is still red, and the re-run after it
+      # comes out right.
+      - name: Check whether this tag already has a release
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName >/dev/null 2>&1; then
+            echo "$TAG already has a release -- leaving it alone"
+            echo "exists=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      # The release before this one, which is where the changelog range starts. Not every bump is
+      # tagged, so this is what decides whether the body carries one section or three.
+      #
+      # `git tag --list --merged` rather than `git describe`: it exits 0 with no output when
+      # nothing matches and non-zero on a real failure, so "there is no previous release" and
+      # "the tag lookup broke" stay told apart -- which `git describe`, exiting 128 for both,
+      # cannot do. It also asks for ancestry rather than for topological distance, so a tag
+      # reached through a merge, or two tags on one commit, need no answer.
+      #
+      # The filtering and the ordering are one awk program because `grep` exits 1 on no match,
+      # which under `pipefail` would kill the step before the message saying what was wrong could
+      # print. The comparison is field-by-field and numeric: sorted as text, v0.1.10 is below
+      # v0.1.9.
+      - name: Find the release this one follows
+        id: previous
+        if: steps.existing.outputs.exists != 'true'
+        run: |
+          tags="$(git tag --list --merged "$TAG")"
+          previous="$(printf '%s\n' "$tags" | awk -v current="${TAG#v}" '
+            function below(x, y,   i) {
+              for (i = 1; i <= 3; i++)
+                if (x[i] + 0 != y[i] + 0) return x[i] + 0 < y[i] + 0
+              return 0
+            }
+            BEGIN { split(current, want, ".") }
+            /^v[0-9]+\.[0-9]+\.[0-9]+$/ {
+              split(substr($0, 2), this, ".")
+              if (!below(this, want)) next
+              if (best == "" || below(high, this)) {
+                best = substr($0, 2)
+                split(best, high, ".")
+              }
+            }
+            END { print best }')"
+
+          # An empty answer is right exactly once, for the first release ever cut. Anywhere else
+          # it means this ran against a history that does not carry the tags -- and the body it
+          # would produce, every section in the changelog, is a plausible-looking Release rather
+          # than an obvious failure.
+          if [ -z "$previous" ]; then
+            others="$(git tag --list 'v*' | grep -cE '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)"
+            [ "$others" = 1 ] || {
+              echo "::error::found no release tag before $TAG, yet the repository carries $others of them -- the history this ran against does not have the tags to look through"
+              exit 1
+            }
+            echo "no release precedes $TAG; this is the first"
+          else
+            echo "$TAG follows v$previous"
+          fi
+          echo "previous=$previous" >>"$GITHUB_OUTPUT"
+
+      # Every changelog section this tag delivers, which for a tag that skipped a version or two
+      # is more than its own. The script carries why the body is assembled rather than generated
+      # from the pull requests merged since.
+      - name: Write the release notes
+        if: steps.existing.outputs.exists != 'true'
+        env:
+          PREVIOUS: ${{ steps.previous.outputs.previous }}
+        run: |
+          scripts/release_notes.sh \
+            --version "$VERSION" \
+            --previous "$PREVIOUS" \
+            --image "$REPO" \
+            >"$RUNNER_TEMP/release-notes.md"
+          cat "$RUNNER_TEMP/release-notes.md"
+
+      # Written into RUNNER_TEMP rather than beside the checked-in one, which stays as it is:
+      # this file is attached to the Release and never committed.
+      - name: Pin a compose file to the image that was published
+        if: steps.existing.outputs.exists != 'true'
+        run: |
+          scripts/compose_pinned.sh --image "$REPO:$VERSION" >"$RUNNER_TEMP/docker-compose.yml"
+          cat "$RUNNER_TEMP/docker-compose.yml"
+
+      # `--verify-tag` so that a ref which is somehow not the tag this ran for fails rather than
+      # having `gh` create a tag of its own. The title is the bare version, which is how the most
+      # recent release in this repository is titled -- a list reading 0.1.5 then v0.1.6 would be
+      # this job disagreeing with what is already there.
+      #
+      # A Release created with GITHUB_TOKEN raises no `release` event -- GitHub suppresses that
+      # to stop a workflow triggering itself. Nothing listens for one today; whoever adds an
+      # `on: release` workflow needs to know it would never fire from here.
+      - name: Create the release
+        if: steps.existing.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "$VERSION" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            "$RUNNER_TEMP/docker-compose.yml"

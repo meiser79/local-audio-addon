@@ -82,6 +82,16 @@ jobs:
       - name: Test the security-rating check
         run: scripts/security_rating_test.sh
 
+      # Here for the reason the two above are: they read this repository's own files and need
+      # nothing built. Between them they cover everything release.yml assembles a Release out of,
+      # and release.yml runs only on a tag -- so a pull request that breaks either is caught here
+      # or it is caught by the release.
+      - name: Test the release-notes assembly
+        run: scripts/release_notes_test.sh
+
+      - name: Test the pinned compose file
+        run: scripts/compose_pinned_test.sh
+
       # sync-store.yml fires on release.yml's `name:`, and GitHub matches the pair silently: a
       # renamed Release would unhook the store sync with no symptom anywhere. Asserted here so
       # the renaming pull request itself goes red.
