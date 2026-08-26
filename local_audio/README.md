@@ -111,8 +111,6 @@ worth reading first.
 This app is **experimental**. It works, but it has not been through wide testing
 on real hardware.
 
-- The default player name is this machine's hostname, usually
-  **homeassistant**. Renaming it is what the **Player name** option is for.
 - The log may carry a one-off warning banner from the mDNS compatibility layer
   the player is built against. It is printed outside the player's own log format
   and is harmless.
