@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.9
+
+Fixes the error Home Assistant recorded every time this app was stopped. That
+is what 0.1.3 set out to do as well; this is why it kept happening.
+
+- Stopping the app no longer ends in `exited with non-zero exit code 137`. The
+  two-second deadline added in 0.1.3 was never able to fire. This app runs
+  behind an AppArmor profile, and that profile did not let it signal the two
+  bundled daemons once they had dropped to their own user accounts — so
+  neither the stop signal nor the kill meant to follow it ever arrived, nothing
+  bounded the wait, and Home Assistant killed the container after ten seconds
+  exactly as before. The app now stops under its own power, in about two
+  seconds. The profile grants nothing beyond signalling its own processes,
+  which are the only ones in the container.
+- On some systems this player never appeared in Music Assistant at all. The
+  same profile would not let the bundled mDNS daemon open the socket it watches
+  the network on, so it failed at startup and restarted every second for as
+  long as the app ran, advertising nothing. Whether that happened at all
+  depended on the kernel underneath, so it was never a fault everybody saw.
+
 ## 0.1.8
 
 Built on `sendspin-cli` v0.1.4, and through it `sendspin-cpp` v0.7.2.

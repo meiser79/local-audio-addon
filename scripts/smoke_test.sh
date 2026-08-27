@@ -11,17 +11,21 @@
 # the API bashio reads, which is what the add-on does. Every check below is written once and both
 # modes deliver to it, so the two paths cannot end up held to different standards.
 #
-# Needs: docker, and python3 for the stand-in Supervisor in add-on mode.
+# Needs: docker, and python3 for the stand-in Supervisor in add-on mode. One check confines a
+# container with the add-on's own AppArmor profile, and needs a kernel that enforces one plus
+# apparmor_parser and the privilege to load it; without those it says so and is skipped, unless
+# --require-apparmor is given, which makes that a failure instead.
 #
-# Usage: scripts/smoke_test.sh <image-ref> [--mode standalone|addon]
+# Usage: scripts/smoke_test.sh <image-ref> [--mode standalone|addon] [--require-apparmor]
 
 set -euo pipefail
 
 MODE=standalone
 IMAGE=''
+REQUIRE_APPARMOR=false
 
 usage() {
-    printf 'usage: %s <image-ref> [--mode standalone|addon]\n' "$0" >&2
+    printf 'usage: %s <image-ref> [--mode standalone|addon] [--require-apparmor]\n' "$0" >&2
 }
 
 while [ "$#" -gt 0 ]; do
@@ -36,6 +40,10 @@ while [ "$#" -gt 0 ]; do
             }
             MODE=$2
             shift 2
+            ;;
+        --require-apparmor)
+            REQUIRE_APPARMOR=true
+            shift
             ;;
         -h | --help)
             usage
@@ -65,11 +73,14 @@ case $MODE in
         ;;
 esac
 
-readonly MODE IMAGE
+readonly MODE IMAGE REQUIRE_APPARMOR
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 readonly SCRIPT_DIR
 readonly FAKE_SUPERVISOR="$SCRIPT_DIR/fake_supervisor.py"
+
+# The add-on's own AppArmor profile. The name it is loaded under is APPARMOR_SLUG, below.
+readonly APPARMOR_SOURCE="$SCRIPT_DIR/../local_audio/apparmor.txt"
 
 # The option values the checks ask for. A space in the name is deliberate: it is the one option
 # whose value reaches both the config file and the mDNS advertisement, and quoting it wrongly is
@@ -109,6 +120,22 @@ readonly HEALTH_TIMEOUT_S=150
 # how the 137 on every stop went unnoticed.
 readonly STOP_TIMEOUT_S=10
 
+# What the shutdown is held to, as against the grace above it, and not a number chosen here: it
+# is the worst case the image computes for itself in the Dockerfile's S6_KILL_GRACETIME comment
+# -- three longruns at 2000ms of `timeout-kill` each, plus the 2000ms tail. Every service can
+# wedge and still come in under it.
+#
+# So a stop that exceeds this is one whose bounds are not holding, whatever the grace period
+# happens to allow. This is the one deadline here that is deliberately tight where the waits
+# above are deliberately generous, and the difference is what each bounds: those bound a loaded
+# runner, this bounds the image, and the image's own arithmetic does not slow down under load. A
+# healthy stop measures two to three seconds.
+#
+# `SECONDS` counts whole seconds and rounds down, so what this refuses in practice is nine and
+# over. A red here is a shutdown that has lost its bound; raising the number would only hide the
+# next one.
+readonly STOP_BUDGET_S=8
+
 WORK_DIR="$(mktemp -d)"
 readonly WORK_DIR
 
@@ -116,8 +143,17 @@ readonly WORK_DIR
 # leaves nothing a later one can collide with.
 readonly RUN_PREFIX="sendspin-smoke-$$"
 
+# A loaded profile is machine state rather than this run's own, and the two modes run one after
+# the other on the same host. Unique for the same reason RUN_PREFIX is: without it a second run
+# replaces and then unloads the profile the first is still confining a container with. The shape
+# is the Supervisor's -- a prefix, then the add-on slug.
+readonly APPARMOR_SLUG="smoke$$_local_audio"
+
 CONTAINERS=()
 PLAYER=''
+APPARMOR_LOADED=''
+APPARMOR_SUDO=()
+APPARMOR_UNAVAILABLE=''
 SUPERVISOR_PID=''
 SUPERVISOR_PORT=''
 SUPERVISOR_MARKER=''
@@ -130,6 +166,20 @@ fail() {
 
 pass() {
     printf 'smoke: ok -- %s\n' "$*"
+}
+
+# For a check the runner cannot host, as against one that failed. `--require-apparmor` turns it
+# into a refusal, which CI passes, so that nowhere able to run a check reports green without
+# having run it. Counted either way and reported at the end, so a developer on a laptop is told
+# what went uncovered rather than left to read a partial run as a full pass.
+SKIPPED=0
+
+skip() {
+    if [ "$REQUIRE_APPARMOR" = true ]; then
+        fail "$* (refused rather than skipped, because --require-apparmor was given)"
+    fi
+    SKIPPED=$((SKIPPED + 1))
+    printf 'smoke: SKIP -- %s\n' "$*" >&2
 }
 
 step() {
@@ -152,6 +202,10 @@ cleanup() {
     for container in ${CONTAINERS[@]+"${CONTAINERS[@]}"}; do
         docker rm --force --volumes "$container" >/dev/null 2>&1 || true
     done
+    # After the containers, so nothing is still running under the profile as it is unloaded. The
+    # kernel keeps it otherwise, and a later run would confine against whatever this one left. A
+    # no-op where the check unloaded it itself, which is the ordinary path.
+    unload_apparmor_profile
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -181,6 +235,16 @@ show_logs() {
     printf '\n---- %s ----\n' "$container" >&2
     cat "$(logs_of "$container")" >&2
     printf -- '---- end %s ----\n' "$container" >&2
+    # Only ever on the way to a failure. A denial is what a confined container fails on and the
+    # container's own log never mentions it, so a red CI run has to carry it out or the evidence
+    # is gone with the runner. Asserting on it instead would be a check that passes on an empty
+    # buffer, which the kernel is free to hand back.
+    if [ -n "$APPARMOR_LOADED" ]; then
+        printf -- '---- recent AppArmor denials ----\n' >&2
+        ${APPARMOR_SUDO[@]+"${APPARMOR_SUDO[@]}"} dmesg 2>/dev/null |
+            grep -F 'apparmor="DENIED"' | tail -20 >&2 || true
+        printf -- '---- end AppArmor denials ----\n' >&2
+    fi
     if [ -n "$SUPERVISOR_PID" ]; then
         printf -- '---- stand-in Supervisor ----\n' >&2
         cat "$WORK_DIR/supervisor.log" >&2
@@ -402,7 +466,7 @@ retire_player() {
 # all of this in a subshell, where the container it started is tracked for cleanup in a copy of
 # the list that dies with it.
 start_player() {
-    local name='' output='' log_level='' server=''
+    local name='' output='' log_level='' server='' apparmor=''
     local pair key value
     local -a args
 
@@ -414,6 +478,7 @@ start_player() {
             output) output=$value ;;
             log_level) log_level=$value ;;
             server) server=$value ;;
+            apparmor) apparmor=$value ;;
             *) fail "start_player: unknown option '$key'" ;;
         esac
     done
@@ -421,6 +486,14 @@ start_player() {
     retire_player
     PLAYER="${RUN_PREFIX}-player-${CHECKS}"
     args=(--detach --name "$PLAYER")
+
+    # The one argument here that is not a player option: it is a `docker run` flag, and it is
+    # delivered the same way in both modes because it has nothing to do with where the options
+    # came from. It lives here rather than in the caller so that a check still says what it wants
+    # and never how the container is started.
+    if [ -n "$apparmor" ]; then
+        args+=(--security-opt "apparmor=$apparmor")
+    fi
 
     if [ "$MODE" = addon ]; then
         start_supervisor "$name" "$output" "$log_level" "$server"
@@ -476,22 +549,34 @@ wait_for_healthcheck() {
 }
 
 # Stops a player the way the Supervisor stops the add-on, and asserts it got there under its own
-# power. Two things have to hold and they fail differently: the container's exit code says whether
-# it beat the grace period, and the s6 shutdown's own running commentary says whether every
-# service went down or the list stopped part-way through on one that would not answer.
+# power. Three things have to hold and they fail differently: the container's exit code says
+# whether it beat the grace period, the time it took says whether it beat it with anything to
+# spare, and the s6 shutdown's own running commentary says whether every service went down or the
+# list stopped part-way through on one that would not answer.
 #
 # Every daemon decision runs this, not just the advertise one. The `s6-pause` decisions bring a
 # different set of processes down, and nothing else in this suite ever stops them.
 assert_clean_stop() {
     local container=$1
-    local log service
+    local log service elapsed
 
+    SECONDS=0
     docker stop --timeout "$STOP_TIMEOUT_S" "$container" >/dev/null ||
         fail "docker stop exited $? -- s6 did not shut the services down"
+    elapsed=$SECONDS
 
     # `docker stop` returns 0 even where it gave up waiting and sent SIGKILL, so its own status
     # proves nothing. The container's does: a killed one reports 137.
     assert_exit_code "$container" 0 'the container stops cleanly within the grace period'
+
+    # Beating the deadline is not the same as beating it with room to spare: a shutdown that has
+    # crept most of the way to the grace passes the line above and takes a 137 on the first host
+    # slower than this one. The margin is asserted rather than left to be met by luck.
+    if [ "$elapsed" -gt "$STOP_BUDGET_S" ]; then
+        show_logs "$container"
+        fail "the shutdown took ${elapsed}s, past the ${STOP_BUDGET_S}s budget -- it is inside the ${STOP_TIMEOUT_S}s grace by luck rather than by design"
+    fi
+    pass "the shutdown took ${elapsed}s, inside the ${STOP_BUDGET_S}s budget"
 
     # The container has exited, so its log is complete -- a line that is not there now never
     # arrives, and there is nothing to wait for.
@@ -503,6 +588,85 @@ assert_clean_stop() {
         fi
         pass "the ${service} service stopped on request rather than being killed"
     done
+}
+
+# ==============================================================================
+# The add-on's own AppArmor profile
+# ==============================================================================
+#
+# Nothing else in this repository ever runs a process under the profile. Every `docker run` above
+# is unconfined, which is what a Compose user gets, and apparmor_check.sh only compiles the file
+# and throws the result away. The installed add-on is confined on every start, so a rule that
+# denies part of the shutdown fails there while the whole of this suite stays green -- which is
+# exactly how a 137 on every Stop survived three releases.
+
+# Whether this runner can confine anything at all, leaving why it cannot in APPARMOR_UNAVAILABLE
+# for the caller to skip on. Nothing here refuses on its own: `--require-apparmor` is the single
+# switch that turns any of these into a failure, so a developer who did not ask for strictness
+# gets told what is missing rather than a red run.
+apparmor_available() {
+    [ -f "$APPARMOR_SOURCE" ] || fail "no profile at $APPARMOR_SOURCE"
+    APPARMOR_UNAVAILABLE=''
+
+    if [ "$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null)" != Y ]; then
+        APPARMOR_UNAVAILABLE='this kernel enforces no AppArmor profile'
+        return 1
+    fi
+
+    if ! command -v apparmor_parser >/dev/null; then
+        APPARMOR_UNAVAILABLE='this kernel has AppArmor but apparmor_parser is not installed -- install the apparmor package'
+        return 1
+    fi
+
+    # Loading a profile needs CAP_MAC_ADMIN. Already held where a runner runs the suite as root,
+    # so sudo is reached for only when it is not.
+    if [ "$(id -u)" -ne 0 ]; then
+        if ! { command -v sudo >/dev/null && sudo -n true 2>/dev/null; }; then
+            APPARMOR_UNAVAILABLE='loading a profile needs root, and passwordless sudo is not available here'
+            return 1
+        fi
+        APPARMOR_SUDO=(sudo -n)
+    fi
+
+    # Stated rather than inherited from whatever the last command above happened to return: a
+    # line appended here could otherwise turn availability into a skip with no reason to print.
+    return 0
+}
+
+# Loads the profile into the kernel under a Supervisor-style slug, and records it for cleanup.
+#
+# The rename is not cosmetic: install_apparmor() rewrites the name to the installed slug before
+# loading, so the profile is never in force under the name it is written with. Loading it as
+# written would test a name the add-on never runs as.
+load_apparmor_profile() {
+    local original rendered="$WORK_DIR/$APPARMOR_SLUG"
+
+    original="$(awk '{ sub(/\r$/, "") } /^profile [^ ]+/ { print $2; exit }' "$APPARMOR_SOURCE")"
+    [ -n "$original" ] || fail "no top-level profile in $APPARMOR_SOURCE"
+
+    # Keyed on the name, not on the indentation: awk strips leading blanks, so `$1` is
+    # "profile" on the three child profiles too, and only `$2` tells the top-level one apart.
+    awk -v from="$original" -v to="$APPARMOR_SLUG" \
+        '{ sub(/\r$/, "") } $1 == "profile" && $2 == from { $2 = to } { print }' \
+        "$APPARMOR_SOURCE" >"$rendered"
+    grep -q "^profile $APPARMOR_SLUG " "$rendered" ||
+        fail "rewriting '$original' to '$APPARMOR_SLUG' did not take"
+
+    ${APPARMOR_SUDO[@]+"${APPARMOR_SUDO[@]}"} apparmor_parser --replace "$rendered" ||
+        fail "apparmor_parser could not load the profile as '$APPARMOR_SLUG'"
+    APPARMOR_LOADED=$rendered
+    pass "the add-on profile is loaded and enforcing as $APPARMOR_SLUG"
+}
+
+# Unloaded as soon as the confined check is done rather than left to the trap, so that a failure
+# in one of the unconfined checks after it does not print a denials block it has nothing to do
+# with. The trap calls this too, for a failure part-way through the check itself, so nothing is
+# left in the kernel either way.
+unload_apparmor_profile() {
+    [ -n "$APPARMOR_LOADED" ] || return 0
+    ${APPARMOR_SUDO[@]+"${APPARMOR_SUDO[@]}"} apparmor_parser --remove "$APPARMOR_LOADED" \
+        >/dev/null 2>&1 || true
+    APPARMOR_LOADED=''
 }
 
 # ==============================================================================
@@ -742,6 +906,54 @@ check_crash_visibility() {
         'the halt says which exit code stopped the container'
 }
 
+# The stop the add-on actually performs: every service running, under the profile the Supervisor
+# installs. The unconfined stops above cannot see this one, because what fails here is a kernel
+# denial that only exists once the profile is in force.
+#
+# The boot is as load-bearing as the stop. A profile that denies avahi its netlink socket leaves
+# the daemon restarting once a second, and a stop that lands between two restarts finds nothing
+# to bring down and reports every service stopped -- passing while asserting nothing. So the
+# player is held until it has advertised, and both daemons are read off the process list, before
+# anything is stopped.
+#
+# The container is on the default bridge, where every other check here is; the add-on runs with
+# `host_network: true`. So this covers the profile, not the profile in the network namespace the
+# add-on actually has. Asking for the host's namespace in CI would put the player's port on the
+# runner, which is a collision this suite has no way to arbitrate.
+check_confined_stop() {
+    local container
+    step 'stopping under the add-on AppArmor profile'
+
+    if ! apparmor_available; then
+        skip "$APPARMOR_UNAVAILABLE, so the confined stop ran nowhere -- the installed add-on is confined on every start"
+        return
+    fi
+
+    load_apparmor_profile
+    start_player "name=$PLAYER_NAME" 'output=null' "log_level=$PLAYER_LOG_LEVEL" \
+        "apparmor=$APPARMOR_SLUG"
+    container=$PLAYER
+
+    assert_log "$container" 'listening on port 8928' 'the player came up confined'
+    assert_log "$container" 'mdns: advertising _sendspin._tcp' \
+        'avahi answered the player, so the daemons are up rather than restarting'
+
+    assert_process "$container" 'avahi-daemon' 'avahi-daemon is running at the moment of the stop'
+    assert_process "$container" 'dbus-daemon' 'dbus-daemon is running at the moment of the stop'
+
+    # The health check reaches into both daemons -- the player's control socket, then
+    # `avahi-daemon --check` -- and Docker calls the add-on unhealthy if it fails. Unconfined it
+    # is asserted nowhere else, and confined is the only way it could fail on a profile rule.
+    healthcheck "$container" >/dev/null ||
+        fail 'the health check does not pass confined -- Docker would call the add-on unhealthy'
+    pass 'the health check passes under the profile'
+
+    # Both daemons have dropped to their own users by now, which is the whole of what makes this
+    # stop different: signalling them is a CAP_KILL the outer profile has to grant.
+    assert_clean_stop "$container"
+    unload_apparmor_profile
+}
+
 # That the options the checks above asserted really did come over the API, authenticated. Without
 # this, add-on mode would still pass on an image that ignored the Supervisor entirely and fell
 # through to its defaults -- `null` is not one of those defaults, but a check that never looks at
@@ -810,11 +1022,16 @@ main() {
     check_credentials_are_kept_out_of_the_mode_line
     check_newline_in_an_option
     check_crash_visibility
+    check_confined_stop
     if [ "$MODE" = addon ]; then
         check_supervisor_was_asked
         check_supervisor_unreachable
     fi
 
+    if [ "$SKIPPED" -ne 0 ]; then
+        printf '\nsmoke: every check that ran passed, %s skipped (%s mode)\n' "$SKIPPED" "$MODE"
+        return
+    fi
     printf '\nsmoke: every check passed (%s mode)\n' "$MODE"
 }
 

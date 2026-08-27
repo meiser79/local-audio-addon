@@ -10,8 +10,20 @@ profile local_audio flags=(attach_disconnected,mediate_deleted) {
 
   # A fixed-function player: no mount, umount or remount, no dac_read_search
   # and no sys_admin. The supervision tree, bashio and the option-reading
-  # scripts all run as root and switch to no other user, so this outer profile
-  # declares no capability; the two bundled daemons declare theirs below.
+  # scripts all run as root and switch to no other user, so CAP_KILL is the
+  # only capability this outer profile declares; the two bundled daemons
+  # declare theirs below.
+  #
+  # s6-supervise signals each longrun down, and both daemons have dropped to
+  # their own uids by then, so every stop is a CAP_KILL check -- the SIGTERM,
+  # and equally the SIGKILL each service's `timeout-kill` fires behind it. Deny
+  # it and neither arrives, which leaves those files bounding nothing.
+  #
+  # It grants less than its name suggests. The container has its own pid
+  # namespace, so there is nothing outside it to signal, and the signal rules
+  # below still decide which signals may reach which of these processes.
+  capability kill,
+
   file,
 
   # s6 supervises the three services and passes on a container stop. The stop
@@ -124,10 +136,14 @@ profile local_audio flags=(attach_disconnected,mediate_deleted) {
     @{PROC}/sys/net/ipv{4,6}/** r,
 
     # 5353 on both families, plus the netlink socket it watches interface and
-    # address changes on.
+    # address changes on. `dgram` is the type avahi actually opens that one
+    # with -- socket(PF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE) -- and a kernel
+    # that mediates netlink by type denies the bind under any other, which
+    # fails the daemon's interface enumeration and leaves it restarting for as
+    # long as the app runs.
     network inet dgram,
     network inet6 dgram,
-    network netlink raw,
+    network netlink dgram,
     network unix stream,
     network unix dgram,
   }
