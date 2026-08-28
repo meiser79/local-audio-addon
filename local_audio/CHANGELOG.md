@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.10
+
+Built on `sendspin-cli` v0.1.5, and through it `sendspin-cpp` v0.7.2.
+
+- The player can now play through a PulseAudio or PipeWire server directly,
+  rather than only through ALSA's bridges to them. Nothing changes for this app:
+  it plays through the PulseAudio that Home Assistant maps in, over ALSA,
+  exactly as before, and the output is still chosen in the **Audio** panel. The
+  new backends are for the Docker Compose deployment of the same image, on a
+  machine whose audio is a sound server rather than a card — there they can name
+  a particular sink or node, they show up in the host's mixer under their own
+  name, and they take their timing from the server, which matters for a player
+  whose job is staying in sync with others.
+- One change for that Compose deployment, and only where `SENDSPIN_OUTPUT` is
+  set to exactly `pulse` or `pipewire`: those two names now select the new
+  native backends instead of ALSA's plugin devices of the same name. They reach
+  the same server, so audio keeps playing, and the container says which route
+  it took in its log at every start. `alsa:pulse` and `alsa:pipewire` are the
+  way back.
+
 ## 0.1.9
 
 Fixes the error Home Assistant recorded every time this app was stopped. That

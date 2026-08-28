@@ -1,6 +1,7 @@
 # Music Assistant local audio
 
-Plays Music Assistant audio out of the machine it runs on, over ALSA.
+Plays Music Assistant audio out of the machine it runs on — through ALSA, or
+through a PulseAudio or PipeWire server the host already runs.
 
 This repository is packaging only. The player itself is
 [`sendspin-cli`](https://github.com/Sendspin/sendspin-cpp-cli), which lives
@@ -25,39 +26,106 @@ Music Assistant discovers the player over mDNS and connects back in on port
 8928, which is why the container needs `network_mode: host`. Once the log reads
 
 ```
-I cli: sendspin-cli 0.1.4 listening on port 8928 as "Living Room" (output: default, mDNS: dns_sd (avahi-compat))
+I cli: sendspin-cli 0.1.5 listening on port 8928 as "Living Room" (output: default, mDNS: dns_sd (avahi-compat))
 I mdns: advertising _sendspin._tcp. as "Living Room" on port 8928 (path /sendspin)
 ```
 
 the player is waiting to be picked up in Music Assistant's Sendspin provider.
 
-Configuration is four environment variables, all optional:
+This image's own configuration is four environment variables, all optional:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SENDSPIN_NAME` | `Local Audio` | Name shown in Music Assistant |
-| `SENDSPIN_OUTPUT` | `default` | ALSA output, see below |
+| `SENDSPIN_OUTPUT` | `default` | Where the audio goes, see below |
 | `SENDSPIN_LOG_LEVEL` | `info` | `none`, `error`, `warn`, `info`, `debug`, `verbose` |
 | `SENDSPIN_SERVER` | unset | Dial out to one server instead of being discovered |
 
+The two sound-server backends also read the environment their own client
+libraries define — `PULSE_SERVER`, `PULSE_COOKIE` and `PIPEWIRE_REMOTE` — which
+the sections below cover.
+
 ## Choosing an output
 
-`default` follows the container's `/etc/asound.conf`, a bare name is an ALSA
-PCM, and `null` discards the audio, which is useful for checking that discovery
-works before wiring up a sound card.
+The image builds five of the player's backends: `null`, `stdout`, `alsa`,
+`pulse` and `pipewire`. `SENDSPIN_OUTPUT` is read in the order upstream
+documents — a reserved name first, then `<backend>:<device>` split on the first
+colon, then anything else as an ALSA PCM name. So `null` discards the audio,
+which is useful for checking that discovery works before wiring up a sound card;
+`pulse` and `pipewire` reach a sound server on the host; and `default`, `hw:1,0`
+or any other unclaimed name is an ALSA PCM.
 
-The image ships no `/etc/asound.conf`. As a Home Assistant app it gets one
-from the Supervisor, which routes `default` to Home Assistant's PulseAudio;
-under Compose there is none, so `default` is ALSA's own default over `/dev/snd`
-— usually the first card, not whatever the host routes its audio through. Name
-the card explicitly if that is not the one you want. To see what the container
-can reach:
+To see what the container can reach:
 
 ```sh
 docker exec ma-local-audio sendspin-cli -l
 ```
 
-then set `SENDSPIN_OUTPUT` to one of the listed names, for example `hw:1,0`.
+It lists the ALSA PCMs, and — where a server is reachable — that server's sinks
+or nodes as well, under the `-o pulse:<sink>` and `-o pipewire:<node>` forms
+that name them. Set `SENDSPIN_OUTPUT` to one of those names.
+
+### ALSA
+
+The image ships no `/etc/asound.conf`. As a Home Assistant app it gets one
+from the Supervisor, which routes `default` to Home Assistant's PulseAudio;
+under Compose there is none, so `default` is ALSA's own default over `/dev/snd`
+— usually the first card, not whatever the host routes its audio through. Name
+the card explicitly if that is not the one you want, for example `hw:1,0`.
+
+### PulseAudio
+
+Bind-mount the host's PulseAudio socket, point `PULSE_SERVER` at where it landed
+and set `SENDSPIN_OUTPUT` to `pulse`, or to `pulse:<sink>` for a specific one;
+`docker-compose.yml` carries the mount and the environment commented out. A bare
+`pulse` follows whichever sink the server calls default, resolved afresh at every
+stream.
+
+A per-user socket lives under that user's `XDG_RUNTIME_DIR`, which is `0700`,
+and that is usually less of an obstacle than it looks: the bind mount is
+resolved by the Docker daemon, which is root, and the container itself runs as
+root with `CAP_DAC_OVERRIDE`. Neither the mode nor the uid is what bites. What
+does, on a Fedora or RHEL host, is SELinux — a bind mount of a host path needs
+`:z` (or `:Z`) on it, or the container is denied the socket with no explanation
+worth the name. Under rootless Docker or `userns-remap` the `0700` becomes real,
+and there a system-wide PulseAudio is the way out.
+
+The client also needs the cookie that authenticates it, mounted and named in
+`PULSE_COOKIE`, unless the socket is configured `auth-anonymous=1`.
+
+### PipeWire
+
+The same shape: bind-mount the host's PipeWire socket, name it in
+`PIPEWIRE_REMOTE` — a value starting with `/` is taken as an absolute socket
+path rather than a name — and set `SENDSPIN_OUTPUT` to `pipewire`, or
+`pipewire:<node>`. Mounting the whole runtime directory and setting
+`XDG_RUNTIME_DIR` works too, and is what a bare remote name resolves against;
+reach for it if the absolute form is ignored. The SELinux note above applies
+here as well.
+
+On a PipeWire host, `pipewire` and `pulse` reach the same server — `pipewire-pulse`
+is on every PipeWire desktop, and a libpulse client goes through it. What the
+native one adds, in [upstream's own
+account](https://github.com/Sendspin/sendspin-cpp-cli#choosing-an-output), is
+that only a native client can name a *node*: `pipewire-pulse` presents sinks, which
+is a compatibility view of the graph rather than the graph. It also has no
+compatibility layer in the audio path at all. The case where it is the only
+route is narrower than it sounds — a machine running PipeWire with
+`pipewire-pulse` not installed, where a libpulse client has nothing to connect
+to.
+
+### Upgrading from 0.1.9 or earlier
+
+Only Compose deployments are affected, and only those setting `SENDSPIN_OUTPUT`
+to exactly `pulse` or `pipewire`. Those two names used to fall through to ALSA's
+plugin PCMs of the same name; they now select the native backends, which reach
+the same server by a different route. The player says so in its log at every
+start. Nothing needs changing to keep working, and `alsa:pulse` and
+`alsa:pipewire` are the way back to the old behaviour if you want it.
+
+The Home Assistant app is unaffected: it offers no output option, so no value
+set there can have changed meaning. Were one to arrive from somewhere else, the
+same log line covers it — the check is on the value, not on where it came from.
 
 ## Discovery, Avahi and D-Bus
 
@@ -117,9 +185,19 @@ The app plays through the PulseAudio that Home Assistant maps in, and the sound
 card is chosen in the app's own Audio panel — it offers no output option of its
 own. It cannot open a card directly: the Supervisor grants an app no cgroup rule
 for the sound devices unless the app also asks for every other device on the
-machine. `hw:` and `plughw:` outputs are therefore a Compose-only capability,
-which is the reason to run the container rather than the app for an
-exclusively-held DAC.
+machine. Naming an output at all is therefore a Compose-only capability — `hw:`
+and `plughw:` PCMs, and the `pulse` and `pipewire` backends alike — which is the
+reason to run the container rather than the app for an exclusively-held DAC.
+
+The app reaches Home Assistant's PulseAudio through ALSA's plugin PCM rather
+than through the native `pulse` backend, and stays there. That bridge is what
+`default` means under the `/etc/asound.conf` the Supervisor renders, it is what
+the app's AppArmor profile grants, and it is what the silent-output check below
+reads its sink from — libpulse substitutes the *client* default for the plugin's
+NULL device, which is why that check reads `default-sink` from `client.conf`.
+The native backend would name its own sink and leave the check reporting on one
+the player is not using. Nothing about the current path is broken, so it is left
+alone.
 
 The app also reads that PulseAudio sink once at start and names it in the log,
 with its level and the port it is routed to. If the sink is muted or at zero it

@@ -121,6 +121,32 @@ sendspin::option() {
     jq -r --arg key "$2" '.[$key] // empty' <<< "$1"
 }
 
+# `pulse` and `pipewire` are reserved backend names in upstream's -o grammar, and
+# this image builds both of those backends -- so either name selects the native
+# backend. A value written for 0.1.9 or earlier meant ALSA's plugin PCM of the
+# same name, which bridges to the same server by a different route. One line at
+# start rather than only in the release notes, because the value is still
+# accepted, still reaches the same server, and the change is otherwise invisible.
+#
+# The value is passed through untouched. Rewriting it to `alsa:pulse` would keep
+# every existing user on the legacy route for good and hide the change instead of
+# reporting it.
+#
+# This earns its place only while an upgrade from 0.1.9 is a thing that happens.
+# Once the 0.1.x line is behind us it is a note about a name that is simply
+# correct, and should go.
+sendspin::warn_if_output_changed_meaning() {
+    local server
+
+    case ${SENDSPIN_OUTPUT} in
+        pulse) server=PulseAudio ;;
+        pipewire) server=PipeWire ;;
+        *) return 0 ;;
+    esac
+
+    sendspin::log "The output ${SENDSPIN_OUTPUT} now selects this player's native ${server} backend rather than ALSA's ${SENDSPIN_OUTPUT} plugin PCM, which it used to mean; alsa:${SENDSPIN_OUTPUT} is that previous behaviour."
+}
+
 # The mdns: prefix is reserved before the first colon in upstream's -s grammar;
 # everything else is a host, host:port or ws URL.
 sendspin::server_is_mdns() {
