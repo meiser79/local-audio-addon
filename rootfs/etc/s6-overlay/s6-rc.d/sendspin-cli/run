@@ -5,6 +5,8 @@ source /usr/lib/sendspin-cli/common.sh
 
 sendspin::read_options
 
+sendspin::warn_if_output_changed_meaning
+
 decision=$(sendspin::daemon_decision)
 
 if [ "${decision}" = 'yes' ]; then

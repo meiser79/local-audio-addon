@@ -312,12 +312,18 @@ assert_exit_code() {
     pass "$what"
 }
 
-# Writes the rendered player configuration to a file and echoes the path.
+# Writes the rendered player configuration to a file and echoes the path. `docker cp` rather
+# than `docker exec cat`, because some of what is worth asserting about a rendered config is on
+# a container the player has since halted, and exec needs one that is still up. Docker's own
+# error is carried into the failure: a cp that failed because the container was removed is a
+# different fault from one that found no file, and collapsing the two sends a reader looking in
+# the wrong place.
 config_of() {
     local container=$1
     local path="$WORK_DIR/${container}.conf"
-    docker exec "$container" cat /run/sendspin-cli/sendspin-cli.conf >"$path" ||
-        fail 'the container rendered no /run/sendspin-cli/sendspin-cli.conf'
+    local err
+    err=$(docker cp "$container:/run/sendspin-cli/sendspin-cli.conf" "$path" 2>&1) ||
+        fail "could not read /run/sendspin-cli/sendspin-cli.conf out of the container -- $err"
     printf '%s\n' "$path"
 }
 
@@ -678,7 +684,7 @@ unload_apparmor_profile() {
 # bundled dbus, avahi-daemon, and the avahi-compat shim the player registers through -- so it is
 # asserted end to end as well as by its parts.
 check_advertise_mode() {
-    local container mode status_out
+    local container mode status_out devices_out
     step 'advertise mode'
     start_player "name=$PLAYER_NAME" 'output=null' "log_level=$PLAYER_LOG_LEVEL"
     container=$PLAYER
@@ -736,6 +742,8 @@ check_advertise_mode() {
     refute_config_line "$container" '^server' \
         'an unset server is left out of the config rather than written empty'
 
+    # Read with exec rather than through config_of above: the mode belongs to the container's own
+    # copy, and `docker cp` writes a host file whose permissions are the runner's business.
     mode=$(docker exec "$container" stat -c %a /run/sendspin-cli/sendspin-cli.conf)
     [ "$mode" = 600 ] || fail "the rendered config is mode $mode, not 600"
     pass 'the rendered config is readable only by root'
@@ -749,6 +757,37 @@ check_advertise_mode() {
         fail 'the control socket did not report the configured output'
     fi
     pass 'the control socket answers and reports the configured output'
+
+    # The list the binary itself reports, as against the one the Dockerfile grepped out of a
+    # configure log in a stage that no longer exists. It is compile-time information either way
+    # -- what it adds is that this is the binary that shipped, in the image that shipped, so a
+    # COPY that took the wrong artifact is caught here and nowhere else. `-l` prints it as part
+    # of explaining how -o reads its argument.
+    devices_out="$WORK_DIR/${container}.devices"
+    docker exec "$container" sendspin-cli -l >"$devices_out" 2>&1 ||
+        fail "sendspin-cli -l exited $? -- $(cat "$devices_out")"
+    if ! grep -F -e 'null, stdout, alsa, pulse, pipewire' "$devices_out" >/dev/null; then
+        cat "$devices_out" >&2
+        fail 'the shipped player does not offer all five backends this image builds'
+    fi
+    pass 'the shipped player offers null, stdout, alsa, pulse and pipewire'
+
+    # And the runtime half, which the list above genuinely cannot answer for: every backend
+    # library is linked rather than dlopened, so a runtime stage missing one gives a binary that
+    # does not start at all -- and `ldd` is the only thing here that says which one, rather than
+    # leaving a reader with every check in the suite red and no cause.
+    if docker exec "$container" ldd /usr/bin/sendspin-cli 2>&1 | grep -F -e 'not found'; then
+        fail 'the shipped player has an unresolved shared library -- a runtime-stage package is missing'
+    fi
+    pass 'every library the player links resolves in the image that shipped'
+
+    # The ALSA half of the listing. A container with no sound card still has ALSA's own plugin
+    # PCMs, `null` among them, so the section is never legitimately empty here.
+    if ! grep -E -e '^ALSA PCMs on this host' "$devices_out" >/dev/null; then
+        cat "$devices_out" >&2
+        fail 'sendspin-cli -l listed no ALSA PCMs at all'
+    fi
+    pass 'sendspin-cli -l lists the ALSA PCMs'
 
     healthcheck "$container" >/dev/null || fail "the health check exited $?"
     pass 'the health check passes'
@@ -906,6 +945,83 @@ check_crash_visibility() {
         'the halt says which exit code stopped the container'
 }
 
+# The two option values whose *meaning* changed rather than their handling. `pulse` and
+# `pipewire` used to fall through to ALSA's plugin PCMs of the same name; now that this image
+# builds the native backends, they select those instead. Both routes end at the same server, so
+# nothing fails and nothing but the log would ever say the route moved -- which is the whole
+# reason the line exists, and why an image that dropped it would look perfectly healthy.
+#
+# The value has to survive untouched. Rewriting it to `alsa:pulse` on the way to the config would
+# pin every existing user to the legacy route for good, and the report above would be describing
+# something that had not happened.
+#
+# Nothing here waits on what the player does with the value, which is why the config read below
+# is anchored on the connection-mode line: that is logged after the config is written and before
+# the player is exec'd, so it holds whether the player goes on to run or to give up on a server
+# that is not there.
+check_output_names_that_changed_meaning() {
+    local container backend server
+
+    for backend in pulse pipewire; do
+        case $backend in
+            pulse) server=PulseAudio ;;
+            pipewire) server=PipeWire ;;
+        esac
+
+        step "the output name $backend"
+        start_player "output=$backend" "log_level=$PLAYER_LOG_LEVEL"
+        container=$PLAYER
+
+        assert_log "$container" \
+            "The output ${backend} now selects this player's native ${server} backend" \
+            "the log says ${backend} now means the native ${server} backend"
+        assert_log "$container" "alsa:${backend} is that previous behaviour." \
+            "and names alsa:${backend} as the way back to what it used to mean"
+
+        # Logged immediately after the config is written and before the player is exec'd, so it
+        # is what makes the read below race-free without waiting on the player's own fate.
+        assert_log "$container" 'over mDNS, waiting for a Music Assistant server to connect.' \
+            'the player was started, so its config has been rendered'
+        assert_config_line "$container" "^output = ${backend}\$" \
+            "the value reached the config unaltered rather than rewritten to alsa:${backend}"
+    done
+}
+
+# The mirror of the check above, on the two values every deployment actually runs: nothing about
+# them changed, and a line telling their users their audio moved would be worse than no line at
+# all. Each refusal waits on a line the run script logs *after* the point the warning would have
+# been logged at, which is what makes the absence mean something rather than merely not-yet.
+check_output_names_that_did_not() {
+    local container
+
+    step 'the output name null'
+    start_player 'output=null' "log_level=$PLAYER_LOG_LEVEL"
+    container=$PLAYER
+    assert_log "$container" 'listening on port 8928' 'the player came up on its port'
+    refute_log "$container" 'now selects this player' \
+        'a player on null is told nothing about a backend name that changed meaning'
+
+    step 'the output name default'
+    start_player 'output=default' "log_level=$PLAYER_LOG_LEVEL"
+    container=$PLAYER
+    assert_log "$container" 'over mDNS, waiting for a Music Assistant server to connect.' \
+        'the player was started on the default output'
+    refute_log "$container" 'now selects this player' \
+        'nor is a player on default, which is what both deployments run on'
+
+    # The documented way back, and the value a prefix or substring match would wrongly claim.
+    # Only an exact match on the two bare names is right, and this is what says so.
+    step 'the output name alsa:pulse'
+    start_player 'output=alsa:pulse' "log_level=$PLAYER_LOG_LEVEL"
+    container=$PLAYER
+    assert_log "$container" 'over mDNS, waiting for a Music Assistant server to connect.' \
+        'the player was started on the escape hatch'
+    refute_log "$container" 'now selects this player' \
+        'the alsa: form carries no warning -- it is what the warning points at'
+    assert_config_line "$container" '^output = alsa:pulse$' \
+        'and it reaches the config as written'
+}
+
 # The stop the add-on actually performs: every service running, under the profile the Supervisor
 # installs. The unconfined stops above cannot see this one, because what fails here is a kernel
 # denial that only exists once the profile is in force.
@@ -1021,6 +1137,8 @@ main() {
     check_dial_out_mode
     check_credentials_are_kept_out_of_the_mode_line
     check_newline_in_an_option
+    check_output_names_that_changed_meaning
+    check_output_names_that_did_not
     check_crash_visibility
     check_confined_stop
     if [ "$MODE" = addon ]; then

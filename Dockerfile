@@ -1,8 +1,8 @@
 # The player lives upstream and is built here from a pinned ref; this repo never
 # forks it. Bump both ARGs together: the SHA is checked against the clone, so a
 # repointed tag fails the build instead of quietly shipping different code.
-ARG SENDSPIN_CLI_REF=v0.1.4
-ARG SENDSPIN_CLI_SHA=aeb768befdacda2f3379b93e1a84e469e02c7750
+ARG SENDSPIN_CLI_REF=v0.1.5
+ARG SENDSPIN_CLI_SHA=f035731522e49e748805dabc84cefd8c2b986dfc
 
 # ghcr.io/home-assistant/amd64-base-debian:trixie, which ships s6-overlay v3 and
 # bashio. CI overrides this with the digest for the architecture it is building;
@@ -21,7 +21,12 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG SENDSPIN_CLI_REF
 ARG SENDSPIN_CLI_SHA
 
-# PortAudio is deliberately absent: ALSA is the only backend this image offers.
+# PortAudio is deliberately absent: the route it takes to a Linux sound card is
+# ALSA, which this image already has, so it would be a second way to reach the
+# same devices. libpulse-dev and libpipewire-0.3-dev build the two native
+# sound-server backends, which reach the same servers ALSA's plugin PCMs do but
+# not through a plugin -- see the runtime stage below for what that buys and
+# what it costs.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -30,6 +35,8 @@ RUN apt-get update \
         git \
         libasound2-dev \
         libavahi-compat-libdnssd-dev \
+        libpipewire-0.3-dev \
+        libpulse-dev \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
@@ -43,16 +50,22 @@ RUN git clone --depth 1 --branch "${SENDSPIN_CLI_REF}" \
         exit 1; \
     fi
 
-# A missing -dev dependency does not fail the configure step, it drops the
-# backend and carries on, so these two greps on the configure summary are the
-# only thing that catches the loss.
+# The flags state intent and the greps enforce it; neither does the other's job.
+# Upstream auto-detects every backend, so a flag left off would make this image's
+# shape a property of whatever the build host had installed -- but asking is not
+# getting, and `=ON` is only a request: a missing -dev dependency does not fail
+# the configure step, it drops the backend and carries on. The greps are what
+# turns that into a failed build. They are the only guard in this stage;
+# scripts/smoke_test.sh asserts the same five off the binary that shipped.
 RUN cmake -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DSENDSPIN_CLI_WITH_MDNS=ON \
         -DSENDSPIN_CLI_WITH_PORTAUDIO=OFF \
+        -DSENDSPIN_CLI_WITH_PULSE=ON \
+        -DSENDSPIN_CLI_WITH_PIPEWIRE=ON \
         -DSENDSPIN_CLI_BUILD_TESTS=OFF \
         | tee configure.log \
-    && grep -qE '^-- sendspin-cli audio backends: null, stdout, alsa$' configure.log \
+    && grep -qE '^-- sendspin-cli audio backends: null, stdout, alsa, pulse, pipewire$' configure.log \
     && grep -qE '^-- sendspin-cli mDNS: dns_sd \(.*libdns_sd\.so.*\)$' configure.log
 
 RUN cmake --build build -j"$(nproc)"
@@ -83,9 +96,41 @@ LABEL \
 # image with apt, but the player links it, so it is named rather than inherited.
 #
 # pulseaudio-utils is `pactl`, which sendspin-init uses to read the selected
-# sink's level and warn if it is silent. Two packages on top of the above --
+# sink's level and warn if it is silent. Two packages for that check --
 # libasound2-plugins already brings libpulse0 -- and no Supervisor permission,
 # where the /audio API route would have needed one.
+#
+# What the two native backends buy over reaching the same servers through ALSA's
+# `pulse` and `pipewire` plugin PCMs, which is the route that was already here:
+# `-l` can enumerate the server's sinks and nodes, so `-o` can name one where
+# the plugin route needs PULSE_SINK or an .asoundrc; the host's mixer sees a
+# stream called sendspin-cli rather than one more "ALSA plug-in"; and the
+# playout timing is the server's own. That last one is why this is not cosmetic
+# for this player: through the plugin, snd_pcm_delay() reports the plugin's
+# buffering rather than the server's, and a synchronised multi-room player is
+# exactly the thing that cannot afford a sync figure about the wrong buffer.
+#
+# The native PulseAudio backend costs nothing at runtime -- libpulse0 is already
+# here, brought in above. libpipewire-0.3-0t64 is the whole price of the PipeWire
+# one, and it is not small: it hard-depends on libspa-0.2-modules of the same
+# version, whose own dependencies bring an LV2 host and a resampler with it.
+# Twelve packages in all -- libpipewire-0.3-0t64 and libspa-0.2-modules
+# themselves, then libabsl20240722, libebur128-1, libfftw3-single3, liblilv-0-0,
+# libmysofa1, libserd-0-0, libsord-0-0, libsratom-0-0, libwebrtc-audio-processing-1-3
+# and libzix-0-0 -- for about 16.6 MB, measured as the difference over the set
+# above on debian:trixie-slim. libsndfile1 is a dependency of that set too and
+# is absent from this list only because pulseaudio-utils already brought it.
+#
+# Upstream is clear that PipeWire reaches no host libpulse cannot, since
+# pipewire-pulse is on every PipeWire desktop. What it buys is node selection --
+# pipewire-pulse presents sinks, a compatibility view of the graph rather than
+# the graph -- and no compatibility layer in the audio path at all. The hosts it
+# adds outright are the narrow case: a machine running PipeWire with no
+# pipewire-pulse installed, where a libpulse client finds nothing to connect to.
+#
+# Note the t64 suffix: there is no plain libpipewire-0.3-0 in trixie. Trixie
+# ships PipeWire 1.4.2, well past the 0.3.64 upstream requires for the node
+# targeting that makes `-o pipewire:<node>` name a node rather than be ignored.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         avahi-daemon \
@@ -93,6 +138,7 @@ RUN apt-get update \
         libasound2-plugins \
         libasound2t64 \
         libavahi-compat-libdnssd1 \
+        libpipewire-0.3-0t64 \
         libstdc++6 \
         pulseaudio-utils \
     && rm -rf /var/lib/apt/lists/*
