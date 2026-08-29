@@ -14,6 +14,13 @@ configuration:
     description: >-
       Advertise source@v1 and allow Music Assistant to use this device's selected
       audio input as a live source.
+  legacy_mode:
+    name: Legacy source stream mode
+    description: >-
+      Use the legacy client_stream/start and client_stream/end message names for
+      compatibility with older Music Assistant/aiosendspin versions. Disable this
+      to use the current Sendspin specification names client-stream/start and
+      client-stream/end.
   log_level:
     name: Log level
     description: >-

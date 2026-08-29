@@ -32,6 +32,7 @@ options:
   name: ""
   player_enabled: true
   source_enabled: true
+  legacy_mode: true
   line_sense: true
   line_sense_dbfs: -50
   line_sense_attack_ms: 300
@@ -44,6 +45,7 @@ schema:
   name: str?
   player_enabled: bool
   source_enabled: bool
+  legacy_mode: bool
   line_sense: bool
   line_sense_dbfs: int
   line_sense_attack_ms: int

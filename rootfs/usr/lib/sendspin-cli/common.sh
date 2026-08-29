@@ -40,6 +40,7 @@ sendspin::read_options() {
         # stand-in Supervisor in scripts/smoke_test.sh can still deliver one.
         SENDSPIN_PLAYER_ENABLED=$(sendspin::option "${config}" 'player_enabled')
         SENDSPIN_SOURCE_ENABLED=$(sendspin::option "${config}" 'source_enabled')
+        SENDSPIN_LEGACY_MODE=$(sendspin::option "${config}" 'legacy_mode')
         SENDSPIN_OUTPUT=$(sendspin::option "${config}" 'output')
         SENDSPIN_INPUT=$(sendspin::option "${config}" 'input')
         SENDSPIN_LINE_SENSE=$(sendspin::option "${config}" 'line_sense')
@@ -55,6 +56,7 @@ sendspin::read_options() {
     : "${SENDSPIN_NAME:=Local Audio}"
     : "${SENDSPIN_PLAYER_ENABLED:=true}"
     : "${SENDSPIN_SOURCE_ENABLED:=true}"
+    : "${SENDSPIN_LEGACY_MODE:=true}"
     : "${SENDSPIN_OUTPUT:=default}"
     : "${SENDSPIN_INPUT:=default}"
     : "${SENDSPIN_LINE_SENSE:=true}"
@@ -67,7 +69,7 @@ sendspin::read_options() {
     # A newline in a value would add config keys of the caller's choosing, and
     # an injected `server` turns the mDNS advertisement off without saying so.
     for name in SENDSPIN_NAME SENDSPIN_PLAYER_ENABLED SENDSPIN_SOURCE_ENABLED \
-        SENDSPIN_OUTPUT SENDSPIN_INPUT SENDSPIN_LINE_SENSE \
+        SENDSPIN_LEGACY_MODE SENDSPIN_OUTPUT SENDSPIN_INPUT SENDSPIN_LINE_SENSE \
         SENDSPIN_LINE_SENSE_RELEASE_MS SENDSPIN_LOG_LEVEL SENDSPIN_SERVER; do
         value="${!name}"
         if [ "${value}" != "${value%%$'\n'*}" ]; then
