@@ -4,6 +4,16 @@ configuration:
     description: >-
       The name this player shows up under in Music Assistant. Leave it empty and
       it is called "Local Audio".
+  player_enabled:
+    name: Enable player role
+    description: >-
+      Advertise player@v1 and allow Music Assistant to use this device for
+      synchronized audio playback.
+  source_enabled:
+    name: Enable source role
+    description: >-
+      Advertise source@v1 and allow Music Assistant to use this device's selected
+      audio input as a live source.
   log_level:
     name: Log level
     description: >-

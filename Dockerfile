@@ -1,8 +1,11 @@
 # The player lives upstream and is built here from a pinned ref; this repo never
 # forks it. Bump both ARGs together: the SHA is checked against the clone, so a
 # repointed tag fails the build instead of quietly shipping different code.
-ARG SENDSPIN_CLI_REF=v0.1.5
+#ARG SENDSPIN_CLI_REF=v0.1.5
 ARG SENDSPIN_CLI_SHA=f035731522e49e748805dabc84cefd8c2b986dfc
+ARG SENDSPIN_CLI_REF=main
+#ARG SENDSPIN_CPP_REF=v0.7.2
+ARG SENDSPIN_CPP_REF=main
 
 # ghcr.io/home-assistant/amd64-base-debian:trixie, which ships s6-overlay v3 and
 # bashio. CI overrides this with the digest for the architecture it is building;
@@ -20,6 +23,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG SENDSPIN_CLI_REF
 ARG SENDSPIN_CLI_SHA
+ARG SENDSPIN_CPP_REF
 
 # PortAudio is deliberately absent: the route it takes to a Linux sound card is
 # ALSA, which this image already has, so it would be a second way to reach the
@@ -37,15 +41,24 @@ RUN apt-get update \
         libavahi-compat-libdnssd-dev \
         libpipewire-0.3-dev \
         libpulse-dev \
+        libssl-dev \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
 
-RUN git clone --depth 1 --branch "${SENDSPIN_CLI_REF}" \
-        https://github.com/Sendspin/sendspin-cpp-cli.git . \
+RUN git init /sendspin-cpp \
+    && git -C /sendspin-cpp remote add origin https://github.com/meiser79/sendspin-cpp.git \
+    && git -C /sendspin-cpp fetch --depth 1 origin "${SENDSPIN_CPP_REF}" \
+    && git -C /sendspin-cpp checkout --detach FETCH_HEAD
+
+RUN git init . \
+    && git remote add origin https://github.com/meiser79/sendspin-cpp-cli.git \
+    && git fetch --depth 1 origin "${SENDSPIN_CLI_REF}" \
+    && git checkout --detach FETCH_HEAD \
     && cloned="$(git rev-parse --verify HEAD)" \
-    && if [ "${cloned}" != "${SENDSPIN_CLI_SHA}" ]; then \
+    && if [ "${SENDSPIN_CLI_REF}" = "v0.1.4" ] \
+        && [ "${cloned}" != "${SENDSPIN_CLI_SHA}" ]; then \
         echo "sendspin-cli ${SENDSPIN_CLI_REF} is ${cloned}, expected ${SENDSPIN_CLI_SHA}" >&2; \
         exit 1; \
     fi
@@ -64,6 +77,8 @@ RUN cmake -B build \
         -DSENDSPIN_CLI_WITH_PULSE=ON \
         -DSENDSPIN_CLI_WITH_PIPEWIRE=ON \
         -DSENDSPIN_CLI_BUILD_TESTS=OFF \
+        -DFETCHCONTENT_SOURCE_DIR_SENDSPIN=/sendspin-cpp \
+        -DSENDSPIN_ENABLE_SOURCE=ON \
         | tee configure.log \
     && grep -qE '^-- sendspin-cli audio backends: null, stdout, alsa, pulse, pipewire$' configure.log \
     && grep -qE '^-- sendspin-cli mDNS: dns_sd \(.*libdns_sd\.so.*\)$' configure.log
@@ -72,12 +87,10 @@ RUN cmake --build build -j"$(nproc)"
 
 RUN DESTDIR=/stage cmake --install build --component sendspin-cli
 
-# SENDSPIN_GIT_TAG is the Sendspin/sendspin-cpp tag upstream's CMake pulls in via
-# FetchContent, so it is the transitive pin this image inherits.
-RUN core_tag="$(sed -n 's/^set(SENDSPIN_GIT_TAG "\([^"]*\)".*/\1/p' CMakeLists.txt)" \
-    && test -n "${core_tag}" \
-    && printf 'SENDSPIN_CLI_REF=%s\nSENDSPIN_CLI_SHA=%s\nSENDSPIN_GIT_TAG=%s\n' \
-        "${SENDSPIN_CLI_REF}" "${SENDSPIN_CLI_SHA}" "${core_tag}" \
+# Record both requested refs and the exact sendspin-cpp commit that was built.
+RUN core_sha="$(git -C /sendspin-cpp rev-parse --verify HEAD)" \
+    && printf 'SENDSPIN_CLI_REF=%s\nSENDSPIN_CLI_SHA=%s\nSENDSPIN_CPP_REF=%s\nSENDSPIN_CPP_SHA=%s\n' \
+        "${SENDSPIN_CLI_REF}" "${SENDSPIN_CLI_SHA}" "${SENDSPIN_CPP_REF}" "${core_sha}" \
         > /build-info.txt
 
 
@@ -138,7 +151,11 @@ RUN apt-get update \
         libasound2-plugins \
         libasound2t64 \
         libavahi-compat-libdnssd1 \
+<<<<<<< HEAD
         libpipewire-0.3-0t64 \
+=======
+        libssl3t64 \
+>>>>>>> 8b7410c (source@v1 implementation)
         libstdc++6 \
         pulseaudio-utils \
     && rm -rf /var/lib/apt/lists/*

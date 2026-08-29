@@ -38,7 +38,14 @@ sendspin::read_options() {
         # Not settable from the add-on any more: absent from the Supervisor's
         # config it falls through to the default below. The read stays so the
         # stand-in Supervisor in scripts/smoke_test.sh can still deliver one.
+        SENDSPIN_PLAYER_ENABLED=$(sendspin::option "${config}" 'player_enabled')
+        SENDSPIN_SOURCE_ENABLED=$(sendspin::option "${config}" 'source_enabled')
         SENDSPIN_OUTPUT=$(sendspin::option "${config}" 'output')
+        SENDSPIN_INPUT=$(sendspin::option "${config}" 'input')
+        SENDSPIN_LINE_SENSE=$(sendspin::option "${config}" 'line_sense')
+        SENDSPIN_LINE_SENSE_DBFS=$(sendspin::option "${config}" 'line_sense_dbfs')
+        SENDSPIN_LINE_SENSE_ATTACK_MS=$(sendspin::option "${config}" 'line_sense_attack_ms')
+        SENDSPIN_LINE_SENSE_RELEASE_MS=$(sendspin::option "${config}" 'line_sense_release_ms')
         SENDSPIN_LOG_LEVEL=$(sendspin::option "${config}" 'log_level')
         SENDSPIN_SERVER=$(sendspin::option "${config}" 'server')
     fi
@@ -46,13 +53,22 @@ sendspin::read_options() {
     # A fixed name rather than the host's: `homeassistant` said nothing about
     # what the player is, and reading it cost the host's UTS namespace.
     : "${SENDSPIN_NAME:=Local Audio}"
+    : "${SENDSPIN_PLAYER_ENABLED:=true}"
+    : "${SENDSPIN_SOURCE_ENABLED:=true}"
     : "${SENDSPIN_OUTPUT:=default}"
+    : "${SENDSPIN_INPUT:=default}"
+    : "${SENDSPIN_LINE_SENSE:=true}"
+    : "${SENDSPIN_LINE_SENSE_DBFS:=-50}"
+    : "${SENDSPIN_LINE_SENSE_ATTACK_MS:=300}"
+    : "${SENDSPIN_LINE_SENSE_RELEASE_MS:=5000}"
     : "${SENDSPIN_LOG_LEVEL:=info}"
     SENDSPIN_SERVER="${SENDSPIN_SERVER:-}"
 
     # A newline in a value would add config keys of the caller's choosing, and
     # an injected `server` turns the mDNS advertisement off without saying so.
-    for name in SENDSPIN_NAME SENDSPIN_OUTPUT SENDSPIN_LOG_LEVEL SENDSPIN_SERVER; do
+    for name in SENDSPIN_NAME SENDSPIN_PLAYER_ENABLED SENDSPIN_SOURCE_ENABLED \
+        SENDSPIN_OUTPUT SENDSPIN_INPUT SENDSPIN_LINE_SENSE \
+        SENDSPIN_LINE_SENSE_RELEASE_MS SENDSPIN_LOG_LEVEL SENDSPIN_SERVER; do
         value="${!name}"
         if [ "${value}" != "${value%%$'\n'*}" ]; then
             sendspin::log "${name} contains a newline, which would inject configuration keys."
@@ -118,7 +134,7 @@ sendspin::wait_for_socket() {
 # read because it cannot tell the JSON null of an unset option from the string
 # "null", which is a valid value for output.
 sendspin::option() {
-    jq -r --arg key "$2" '.[$key] // empty' <<< "$1"
+    jq -r --arg key "$2" 'if .[$key] == null then empty else .[$key] end' <<< "$1"
 }
 
 # `pulse` and `pipewire` are reserved backend names in upstream's -o grammar, and
